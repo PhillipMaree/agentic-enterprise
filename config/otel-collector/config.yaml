@@ -9,7 +9,12 @@
 # Pipelines (one per signal):
 #   traces:  OTLP in → batch → Tempo  (via OTLP gRPC)
 #   metrics: OTLP in → batch → Prometheus  (via remote-write)
-#   logs:    OTLP in → batch → Loki  (via HTTP push)
+#   logs:    OTLP in → batch → Loki  (via OTLP HTTP — Loki 3.0+ native)
+#
+# Why otlphttp for logs:
+#   The dedicated `loki` exporter was removed from otel-collector-contrib.
+#   Loki 3.0+ natively accepts OTLP HTTP at /otlp/v1/logs, so we use the
+#   generic `otlphttp` exporter pointed at that path.
 
 receivers:
   # OTLP is the only ingress. Both gRPC (4317) and HTTP (4318) are exposed
@@ -52,16 +57,13 @@ exporters:
     tls:
       insecure: true
 
-  # Logs → Loki HTTP push API.
-  loki:
-    endpoint: http://loki:3100/loki/api/v1/push
+  # Logs → Loki via Loki's native OTLP HTTP endpoint.
+  otlphttp/loki:
+    endpoint: http://loki:3100/otlp
+    tls:
+      insecure: true
 
 service:
-  # The collector itself emits metrics on :8888 — Prometheus scrapes this.
-  telemetry:
-    metrics:
-      address: 0.0.0.0:8888
-
   pipelines:
     traces:
       receivers: [otlp]
@@ -74,4 +76,4 @@ service:
     logs:
       receivers: [otlp]
       processors: [memory_limiter, batch]
-      exporters: [loki]
+      exporters: [otlphttp/loki]

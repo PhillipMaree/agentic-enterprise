@@ -1,0 +1,16 @@
+{
+  "_comment": "Dev-only S3 identities for SeaweedFS. Two identities: `any` matches the access/secret keys all platform services use (tempo, loki, mlflow), and `anonymous` lets unsigned requests through so quick curl/wget checks against the S3 endpoint still work. NEVER ship this in a shared environment.",
+  "identities": [
+    {
+      "name": "anonymous",
+      "actions": ["Read", "Write", "List", "Tagging", "Admin"]
+    },
+    {
+      "name": "any",
+      "credentials": [
+        { "accessKey": "any", "secretKey": "any" }
+      ],
+      "actions": ["Admin", "Read", "Write", "List", "Tagging"]
+    }
+  ]
+}

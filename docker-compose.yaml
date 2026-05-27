@@ -24,6 +24,11 @@ services:
       - server
       - -dir=/data
       - -s3
+      # Without -s3.config, SeaweedFS rejects v4-signed requests
+      # ("Signed request requires setting up SeaweedFS S3 authentication").
+      # Tempo, Loki, and MLflow all sign their S3 requests, so we provide
+      # a permissive dev identities file that accepts the `any:any` creds.
+      - -s3.config=/etc/seaweedfs/s3-identities.json
       - -master.volumeSizeLimitMB=1024
     ports:
       - "9333:9333"
@@ -32,9 +37,12 @@ services:
       - "8333:8333"
     volumes:
       - ./.seaweedfs:/data
+      - ./config/seaweedfs/s3-identities.json:/etc/seaweedfs/s3-identities.json:ro
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:8333/ >/dev/null 2>&1 || exit 1"]
+      # 127.0.0.1 not localhost: SeaweedFS binds IPv4 only, but
+      # `localhost` inside the container resolves to ::1 first → ECONNREFUSED.
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8333/ >/dev/null 2>&1 || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 5
@@ -232,8 +240,19 @@ services:
       - "8811:8811"
     volumes:
       - ./config/mcp-gateway/config.yaml:/etc/mcp-gateway/config.yaml:ro
+      # MCP Gateway shells out to `docker` to spawn MCP server containers
+      # listed in its config. Without the socket mount, every operation
+      # fails with "Cannot connect to the Docker daemon".
+      - /var/run/docker.sock:/var/run/docker.sock
+    # The image's ENTRYPOINT is already `docker-mcp gateway run`, so we
+    # only pass flag overrides. Default transport is stdio (exits when
+    # stdin closes in a detached container); `--transport streaming
+    # --port 8811` keeps it alive as an HTTP server.
+    command: ["--transport", "streaming", "--port", "8811"]
+    # Plain TCP probe — the gateway's HTTP routes vary by version and there
+    # is no documented `/health`.
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:8811/health >/dev/null 2>&1 || exit 1"]
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 8811 || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 5
@@ -263,15 +282,21 @@ services:
       AWS_ACCESS_KEY_ID: any
       AWS_SECRET_ACCESS_KEY: any
       AWS_DEFAULT_REGION: us-east-1
+    # The official ghcr.io/mlflow/mlflow image doesn't bundle a Postgres
+    # driver. Install psycopg2-binary on startup so the Postgres backend
+    # store works. (Adds ~5s to startup; pip wheel cache hides the cost
+    # on subsequent restarts.)
+    entrypoint: ["/bin/bash", "-lc"]
     command:
-      - mlflow
-      - server
-      - --host=0.0.0.0
-      - --port=5000
-      - --backend-store-uri=postgresql://postgres:password@postgres:5432/mlflow
-      - --artifacts-destination=s3://mlflow-artifacts
-      - --serve-artifacts
-      - --gunicorn-opts=--log-level=info
+      - >
+        pip install --quiet --no-cache-dir psycopg2-binary boto3 &&
+        exec mlflow server
+        --host=0.0.0.0
+        --port=5000
+        --backend-store-uri=postgresql://postgres:password@postgres:5432/mlflow
+        --artifacts-destination=s3://mlflow-artifacts
+        --serve-artifacts
+        --gunicorn-opts=--log-level=info
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:5000/health').read()\" || exit 1"]
       interval: 15s
@@ -320,12 +345,9 @@ services:
       - ./config/tempo/tempo.yaml:/etc/tempo/tempo.yaml:ro
       - ./.tempo:/var/tempo
     command: ["-config.file=/etc/tempo/tempo.yaml"]
-    healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:3200/ready >/dev/null 2>&1 || exit 1"]
-      interval: 15s
-      timeout: 5s
-      retries: 5
-      start_period: 30s
+    # No healthcheck — the grafana/tempo image is distroless (no shell,
+    # no curl/wget). Dependents (otel-collector, grafana) use
+    # `service_started` instead of `service_healthy`.
     networks:
       - network_bridge
 
