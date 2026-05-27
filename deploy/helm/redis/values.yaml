@@ -1,0 +1,26 @@
+image:
+  repository: redis
+  tag: "8"
+  pullPolicy: IfNotPresent
+
+service:
+  port: 6379
+
+persistence:
+  enabled: true
+  size: 1Gi
+  storageClassName: ""
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: "1"
+    memory: 1Gi
+
+args:
+  - --appendonly
+  - "no"
+  - --protected-mode
+  - "no"

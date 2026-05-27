@@ -1,0 +1,26 @@
+seaweedfs:
+  master:
+    enabled: false
+  volume:
+    enabled: false
+  filer:
+    enabled: false
+  s3:
+    enabled: false
+
+  allInOne:
+    enabled: true
+    replicas: 1
+    s3:
+      enabled: true
+      enableAuth: false
+    data:
+      type: persistentVolumeClaim
+      size: 2Gi
+    resources:
+      requests:
+        cpu: "100m"
+        memory: "256Mi"
+      limits:
+        cpu: "1"
+        memory: "1Gi"

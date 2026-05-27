@@ -1,0 +1,20 @@
+# Local service data (docker-compose bind mounts)
+.seaweedfs/
+.redis/
+.postgres/
+.falkordb/
+
+# Helm
+*.tgz
+deploy/helm/*/charts/
+deploy/helm/*/Chart.lock
+
+# Kubernetes
+kubeconfig
+*.kubeconfig
+
+# Editors / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp

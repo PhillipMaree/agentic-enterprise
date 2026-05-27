@@ -1,0 +1,88 @@
+name: deploy-redis
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "deploy/helm/redis/**"
+      - "deploy/kind/kind-config.yaml"
+      - ".github/workflows/deploy-redis.yaml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "deploy/helm/redis/**"
+      - "deploy/kind/kind-config.yaml"
+      - ".github/workflows/deploy-redis.yaml"
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: helm install on ephemeral kind
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+    env:
+      NAMESPACE: agentic-ai
+      RELEASE: agentic-redis
+      CHART_DIR: deploy/helm/redis
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.15.4
+
+      - name: helm lint
+        run: helm lint "$CHART_DIR"
+
+      - name: helm template (render only)
+        run: helm template "$RELEASE" "$CHART_DIR" --namespace "$NAMESPACE"
+
+      - name: Create kind cluster
+        uses: helm/kind-action@v1
+        with:
+          config: deploy/kind/kind-config.yaml
+          cluster_name: agentic-ai
+
+      - name: Create namespace
+        run: kubectl create namespace "$NAMESPACE"
+
+      - name: helm install
+        run: |
+          helm install "$RELEASE" "$CHART_DIR" \
+            --namespace "$NAMESPACE" \
+            --wait --timeout 5m
+
+      - name: Wait for workloads
+        run: |
+          kubectl -n "$NAMESPACE" wait \
+            --for=condition=Available deployment --all \
+            --timeout=300s
+          kubectl -n "$NAMESPACE" get pods,svc,pvc
+
+      - name: Smoke test Redis + verify modules
+        run: |
+          set -euo pipefail
+          POD="$(kubectl -n "$NAMESPACE" get pod \
+            -l app.kubernetes.io/instance="$RELEASE" \
+            -o jsonpath='{.items[0].metadata.name}')"
+          echo "Pod: $POD"
+          kubectl -n "$NAMESPACE" exec "$POD" -- redis-cli ping | tee /tmp/ping
+          grep -q PONG /tmp/ping
+
+          # Required by LangGraph Redis checkpointer
+          kubectl -n "$NAMESPACE" exec "$POD" -- redis-cli MODULE LIST | tee /tmp/modules
+          grep -qi 'search' /tmp/modules || { echo "RediSearch missing"; exit 1; }
+          grep -qiE 'ReJSON|json' /tmp/modules || { echo "RedisJSON missing"; exit 1; }
+
+      - name: Dump diagnostics on failure
+        if: failure()
+        run: |
+          kubectl -n "$NAMESPACE" get all
+          kubectl -n "$NAMESPACE" describe pods
+          kubectl -n "$NAMESPACE" logs -l app.kubernetes.io/instance="$RELEASE" --all-containers --tail=200 || true

@@ -1,0 +1,25 @@
+image:
+  repository: postgres
+  tag: "latest"
+  pullPolicy: IfNotPresent
+
+service:
+  port: 5432
+
+auth:
+  username: postgres
+  password: password
+  database: mlflow
+
+persistence:
+  enabled: true
+  size: 5Gi
+  storageClassName: ""
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: "1"
+    memory: 1Gi

@@ -1,0 +1,105 @@
+name: deploy-seaweedfs
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "deploy/helm/seaweedfs/**"
+      - "deploy/kind/kind-config.yaml"
+      - ".github/workflows/deploy-seaweedfs.yaml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "deploy/helm/seaweedfs/**"
+      - "deploy/kind/kind-config.yaml"
+      - ".github/workflows/deploy-seaweedfs.yaml"
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: helm install on ephemeral kind
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+    env:
+      NAMESPACE: agentic-ai
+      RELEASE: agentic-seaweedfs
+      CHART_DIR: deploy/helm/seaweedfs
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.15.4
+
+      - name: helm dependency update
+        run: helm dependency update "$CHART_DIR"
+
+      - name: helm lint
+        run: helm lint "$CHART_DIR"
+
+      - name: helm template (render only)
+        run: helm template "$RELEASE" "$CHART_DIR" --namespace "$NAMESPACE"
+
+      - name: Create kind cluster
+        uses: helm/kind-action@v1
+        with:
+          config: deploy/kind/kind-config.yaml
+          cluster_name: agentic-ai
+
+      - name: Create namespace
+        run: kubectl create namespace "$NAMESPACE"
+
+      - name: helm install
+        run: |
+          helm install "$RELEASE" "$CHART_DIR" \
+            --namespace "$NAMESPACE" \
+            --wait --timeout 5m
+
+      - name: Wait for workloads
+        run: |
+          kubectl -n "$NAMESPACE" wait \
+            --for=condition=Available deployment --all \
+            --timeout=300s
+          kubectl -n "$NAMESPACE" get pods,svc,pvc
+
+      - name: Smoke test S3 endpoint
+        run: |
+          set -euo pipefail
+          SVC="$(kubectl -n "$NAMESPACE" get svc \
+            -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' \
+            | grep -- '-all-in-one' | head -n1)"
+          if [ -z "$SVC" ]; then
+            echo "No all-in-one service found"
+            kubectl -n "$NAMESPACE" get svc
+            exit 1
+          fi
+          echo "Using service: $SVC"
+          kubectl -n "$NAMESPACE" port-forward "svc/$SVC" 8333:8333 >/tmp/pf.log 2>&1 &
+          PF_PID=$!
+          trap 'kill "$PF_PID" 2>/dev/null || true' EXIT
+          for i in $(seq 1 30); do
+            sleep 1
+            if curl -sS -o /tmp/s3.body -w '%{http_code}\n' http://localhost:8333/ >/tmp/s3.code 2>/dev/null; then
+              break
+            fi
+          done
+          CODE="$(cat /tmp/s3.code 2>/dev/null || echo 000)"
+          echo "HTTP $CODE"
+          cat /tmp/s3.body || true
+          case "$CODE" in
+            2??|3??|4??) echo "S3 endpoint responding"; exit 0 ;;
+            *) echo "S3 endpoint not responding"; cat /tmp/pf.log || true; exit 1 ;;
+          esac
+
+      - name: Dump diagnostics on failure
+        if: failure()
+        run: |
+          kubectl -n "$NAMESPACE" get all
+          kubectl -n "$NAMESPACE" describe pods
+          kubectl -n "$NAMESPACE" logs -l app.kubernetes.io/instance="$RELEASE" --all-containers --tail=200 || true

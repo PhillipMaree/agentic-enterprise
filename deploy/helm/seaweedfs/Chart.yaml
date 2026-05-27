@@ -1,0 +1,10 @@
+apiVersion: v2
+name: agentic-seaweedfs
+description: SeaweedFS S3 for the agentic-ai namespace (dev/kind deploy).
+type: application
+version: 0.1.0
+appVersion: "4.29"
+dependencies:
+  - name: seaweedfs
+    version: 4.29.0
+    repository: https://seaweedfs.github.io/seaweedfs/helm

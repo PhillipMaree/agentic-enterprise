@@ -1,0 +1,92 @@
+services:
+  seaweedfs:
+    image: chrislusf/seaweedfs:4.29
+    container_name: seaweedfs
+    command:
+      - server
+      - -dir=/data
+      - -s3
+      - -master.volumeSizeLimitMB=1024
+    ports:
+      - "9333:9333"
+      - "8080:8080"
+      - "8888:8888"
+      - "8333:8333"
+    volumes:
+      - ./.seaweedfs:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8333/ >/dev/null 2>&1 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    networks:
+      - network_bridge
+
+  redis:
+    image: redis:latest
+    hostname: redis
+    container_name: redis-db
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - ./.redis:/data:rw
+    environment:
+      - REDIS_ARGS=--appendonly no --protected-mode no
+      - ALLOW_EMPTY_PASSWORD=yes
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep PONG"]
+      interval: 10s
+      retries: 5
+      start_period: 5s
+      timeout: 5s
+    networks:
+      - network_bridge
+
+  postgres:
+    image: postgres:latest
+    container_name: postgres
+    hostname: postgres
+    init: true
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: mlflow
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./.postgres:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      - network_bridge
+
+  falkordb:
+    image: falkordb/falkordb:latest
+    container_name: falkordb
+    hostname: falkordb
+    restart: unless-stopped
+    ports:
+      - "6380:6379"
+      - "3000:3000"
+    volumes:
+      - ./.falkordb:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    networks:
+      - network_bridge
+
+networks:
+  network_bridge:
+    driver: bridge

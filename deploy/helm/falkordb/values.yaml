@@ -1,0 +1,21 @@
+image:
+  repository: falkordb/falkordb
+  tag: "latest"
+  pullPolicy: IfNotPresent
+
+service:
+  redisPort: 6379
+  browserPort: 3000
+
+persistence:
+  enabled: true
+  size: 2Gi
+  storageClassName: ""
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: "1"
+    memory: 1Gi

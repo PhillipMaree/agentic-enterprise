@@ -1,0 +1,6 @@
+apiVersion: v2
+name: agentic-falkordb
+description: FalkorDB graph database for the agentic-ai namespace (dev/kind deploy).
+type: application
+version: 0.1.0
+appVersion: "latest"

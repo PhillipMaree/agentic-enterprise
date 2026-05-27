@@ -1,0 +1,84 @@
+name: deploy-postgres
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "deploy/helm/postgres/**"
+      - "deploy/kind/kind-config.yaml"
+      - ".github/workflows/deploy-postgres.yaml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "deploy/helm/postgres/**"
+      - "deploy/kind/kind-config.yaml"
+      - ".github/workflows/deploy-postgres.yaml"
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: helm install on ephemeral kind
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+    env:
+      NAMESPACE: agentic-ai
+      RELEASE: agentic-postgres
+      CHART_DIR: deploy/helm/postgres
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.15.4
+
+      - name: helm lint
+        run: helm lint "$CHART_DIR"
+
+      - name: helm template (render only)
+        run: helm template "$RELEASE" "$CHART_DIR" --namespace "$NAMESPACE"
+
+      - name: Create kind cluster
+        uses: helm/kind-action@v1
+        with:
+          config: deploy/kind/kind-config.yaml
+          cluster_name: agentic-ai
+
+      - name: Create namespace
+        run: kubectl create namespace "$NAMESPACE"
+
+      - name: helm install
+        run: |
+          helm install "$RELEASE" "$CHART_DIR" \
+            --namespace "$NAMESPACE" \
+            --wait --timeout 5m
+
+      - name: Wait for workloads
+        run: |
+          kubectl -n "$NAMESPACE" wait \
+            --for=condition=Available deployment --all \
+            --timeout=300s
+          kubectl -n "$NAMESPACE" get pods,svc,pvc
+
+      - name: Smoke test Postgres
+        run: |
+          set -euo pipefail
+          POD="$(kubectl -n "$NAMESPACE" get pod \
+            -l app.kubernetes.io/instance="$RELEASE" \
+            -o jsonpath='{.items[0].metadata.name}')"
+          echo "Pod: $POD"
+          kubectl -n "$NAMESPACE" exec "$POD" -- pg_isready -U postgres
+          kubectl -n "$NAMESPACE" exec "$POD" -- \
+            psql -U postgres -d mlflow -c 'SELECT 1 AS up;'
+
+      - name: Dump diagnostics on failure
+        if: failure()
+        run: |
+          kubectl -n "$NAMESPACE" get all
+          kubectl -n "$NAMESPACE" describe pods
+          kubectl -n "$NAMESPACE" logs -l app.kubernetes.io/instance="$RELEASE" --all-containers --tail=200 || true
