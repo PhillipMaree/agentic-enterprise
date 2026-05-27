@@ -1,14 +1,18 @@
 name: deploy-tempo
+run-name: deploy-tempo
 
 on:
   push:
     branches: [main]
     paths:
       - "deploy/helm/tempo/**"
-      - "deploy/helm/seaweedfs/**"   # HARD dep
+      - "deploy/helm/seaweedfs/**"
       - "deploy/kind/kind-config.yaml"
       - "deploy.sh"
       - ".github/workflows/deploy-tempo.yaml"
+      - ".github/workflows/_deploy-chart.yaml"
+      - ".github/scripts/smoke-tempo.sh"
+      - ".github/scripts/_common.sh"
   pull_request:
     branches: [main]
     paths:
@@ -17,74 +21,16 @@ on:
       - "deploy/kind/kind-config.yaml"
       - "deploy.sh"
       - ".github/workflows/deploy-tempo.yaml"
+      - ".github/workflows/_deploy-chart.yaml"
+      - ".github/scripts/smoke-tempo.sh"
+      - ".github/scripts/_common.sh"
 
 permissions:
   contents: read
 
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
-
 jobs:
   deploy:
-    name: deploy.sh --up tempo on ephemeral kind
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        shell: bash
-    env:
-      NAMESPACE: agentic-platform
-      RELEASE: platform-tempo
-    steps:
-      - uses: actions/checkout@v5
-
-      - uses: azure/setup-helm@v4
-        with:
-          version: v3.21.0
-
-      - name: Create kind cluster
-        uses: helm/kind-action@v1
-        with:
-          config: deploy/kind/kind-config.yaml
-          cluster_name: agentic-platform
-
-      - name: Install via deploy.sh (auto-installs seaweedfs + buckets)
-        run: ./deploy.sh --up tempo
-
-      - name: Smoke test Tempo OTLP → query round trip
-        run: |
-          set -euo pipefail
-          kubectl -n "$NAMESPACE" port-forward svc/${RELEASE} 3200:3200 4318:4318 >/tmp/pf.log 2>&1 &
-          PF=$!
-          trap 'kill $PF 2>/dev/null || true' EXIT
-          for i in $(seq 1 60); do
-            curl -fsS http://localhost:3200/ready >/dev/null 2>&1 && break
-            sleep 1
-          done
-
-          TRACE_ID="0123456789abcdef0123456789abcdef"
-          NOW_NS="$(date +%s)000000000"
-          NEXT_NS="$(($(date +%s)+1))000000000"
-          curl -fsS -X POST http://localhost:4318/v1/traces \
-            -H 'Content-Type: application/json' \
-            -d "{\"resourceSpans\":[{\"resource\":{\"attributes\":[{\"key\":\"service.name\",\"value\":{\"stringValue\":\"ci-probe\"}}]},\"scopeSpans\":[{\"spans\":[{\"traceId\":\"${TRACE_ID}\",\"spanId\":\"0123456789abcdef\",\"name\":\"ci-test-span\",\"kind\":1,\"startTimeUnixNano\":\"${NOW_NS}\",\"endTimeUnixNano\":\"${NEXT_NS}\"}]}]}]}"
-
-          for i in $(seq 1 30); do
-            CODE="$(curl -s -o /tmp/trace.json -w '%{http_code}' http://localhost:3200/api/traces/${TRACE_ID})"
-            if [ "$CODE" = 200 ] && grep -q ci-test-span /tmp/trace.json; then
-              echo "trace round-tripped"
-              exit 0
-            fi
-            sleep 2
-          done
-          echo "trace never appeared in Tempo"
-          cat /tmp/trace.json || true
-          exit 1
-
-      - name: Dump diagnostics on failure
-        if: failure()
-        run: |
-          kubectl -n "$NAMESPACE" get all
-          kubectl -n "$NAMESPACE" describe pods
-          for c in tempo seaweedfs; do
-            kubectl -n "$NAMESPACE" logs -l app.kubernetes.io/instance=platform-$c --all-containers --tail=200 || true
-          done
+    uses: ./.github/workflows/_deploy-chart.yaml
+    with:
+      chart: tempo
+      smoke_script: smoke-tempo.sh

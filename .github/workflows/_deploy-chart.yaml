@@ -1,0 +1,83 @@
+# Reusable workflow: install a single chart (and its hard deps) on an
+# ephemeral kind cluster via ./deploy.sh, then run the chart-specific
+# smoke test from .github/scripts/.
+#
+# Per-chart trigger workflows (deploy-<chart>.yaml) call this one with
+# `uses: ./.github/workflows/_deploy-chart.yaml`. Keeps the shared
+# scaffolding (checkout, helm setup, kind, deploy.sh invocation) in one
+# place so changes don't have to be propagated across 14 files.
+
+name: _deploy-chart
+
+on:
+  workflow_call:
+    inputs:
+      chart:
+        description: Chart name (matches deploy/helm/<chart>/ and HARD_DEPS in deploy.sh).
+        required: true
+        type: string
+      smoke_script:
+        description: Path under .github/scripts/ to run after install. Empty = skip.
+        required: false
+        type: string
+        default: ""
+      mock_litellm:
+        description: Set LITELLM_USE_MOCK_MODELS=1 when installing the litellm chart.
+        required: false
+        type: boolean
+        default: false
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    env:
+      NAMESPACE: agentic-platform
+      RELEASE: platform-${{ inputs.chart }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.21.0
+
+      - name: Create kind cluster
+        uses: helm/kind-action@v1
+        with:
+          config: deploy/kind/kind-config.yaml
+          cluster_name: agentic-platform
+
+      - name: Free disk space
+        # The full stack pulls a lot of images. Cheap to do unconditionally.
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /opt/hostedtoolcache/CodeQL || true
+
+      - name: ./deploy.sh --up ${{ inputs.chart }}
+        env:
+          LITELLM_USE_MOCK_MODELS: ${{ inputs.mock_litellm && '1' || '0' }}
+        run: ./deploy.sh --up ${{ inputs.chart }}
+
+      - name: Smoke test
+        if: inputs.smoke_script != ''
+        env:
+          LITELLM_USE_MOCK_MODELS: ${{ inputs.mock_litellm && '1' || '0' }}
+        run: bash ".github/scripts/${{ inputs.smoke_script }}"
+
+      - name: Dump diagnostics on failure
+        if: failure()
+        run: |
+          kubectl -n "$NAMESPACE" get all
+          kubectl -n "$NAMESPACE" describe pods | tail -300
+          # Spray logs from every release in the namespace — covers hard
+          # deps that deploy.sh pulled in automatically.
+          for rel in $(helm -n "$NAMESPACE" list -q 2>/dev/null); do
+            echo "=== $rel ==="
+            kubectl -n "$NAMESPACE" logs -l "app.kubernetes.io/instance=$rel" --all-containers --tail=100 || true
+          done

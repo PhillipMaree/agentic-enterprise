@@ -1,4 +1,5 @@
 name: deploy-prometheus
+run-name: deploy-prometheus
 
 on:
   push:
@@ -8,6 +9,9 @@ on:
       - "deploy/kind/kind-config.yaml"
       - "deploy.sh"
       - ".github/workflows/deploy-prometheus.yaml"
+      - ".github/workflows/_deploy-chart.yaml"
+      - ".github/scripts/smoke-prometheus.sh"
+      - ".github/scripts/_common.sh"
   pull_request:
     branches: [main]
     paths:
@@ -15,60 +19,16 @@ on:
       - "deploy/kind/kind-config.yaml"
       - "deploy.sh"
       - ".github/workflows/deploy-prometheus.yaml"
+      - ".github/workflows/_deploy-chart.yaml"
+      - ".github/scripts/smoke-prometheus.sh"
+      - ".github/scripts/_common.sh"
 
 permissions:
   contents: read
 
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
-
 jobs:
   deploy:
-    name: deploy.sh --up prometheus on ephemeral kind
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        shell: bash
-    env:
-      NAMESPACE: agentic-platform
-      RELEASE: platform-prometheus
-    steps:
-      - uses: actions/checkout@v5
-
-      - uses: azure/setup-helm@v4
-        with:
-          version: v3.21.0
-
-      - name: Create kind cluster
-        uses: helm/kind-action@v1
-        with:
-          config: deploy/kind/kind-config.yaml
-          cluster_name: agentic-platform
-
-      - name: Install via deploy.sh
-        run: ./deploy.sh --up prometheus
-
-      - name: Smoke test self-scrape (up{job=prometheus} == 1)
-        run: |
-          set -euo pipefail
-          kubectl -n "$NAMESPACE" port-forward svc/${RELEASE}-server 9090:80 >/tmp/pf.log 2>&1 &
-          PF=$!
-          trap 'kill $PF 2>/dev/null || true' EXIT
-          for i in $(seq 1 60); do
-            curl -fsS http://localhost:9090/-/ready >/dev/null 2>&1 && break
-            sleep 1
-          done
-          for i in $(seq 1 30); do
-            RESP="$(curl -fsS 'http://localhost:9090/api/v1/query?query=up%7Bjob%3D%22prometheus%22%7D')"
-            echo "$RESP" | grep -oE '"value":\[[0-9.]+,"1"' && exit 0
-            sleep 2
-          done
-          echo "prometheus did not self-scrape successfully"
-          exit 1
-
-      - name: Dump diagnostics on failure
-        if: failure()
-        run: |
-          kubectl -n "$NAMESPACE" get all
-          kubectl -n "$NAMESPACE" describe pods
-          kubectl -n "$NAMESPACE" logs -l app.kubernetes.io/instance="$RELEASE" --all-containers --tail=200 || true
+    uses: ./.github/workflows/_deploy-chart.yaml
+    with:
+      chart: prometheus
+      smoke_script: smoke-prometheus.sh

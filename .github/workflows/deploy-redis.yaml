@@ -1,4 +1,5 @@
 name: deploy-redis
+run-name: deploy-redis
 
 on:
   push:
@@ -8,6 +9,8 @@ on:
       - "deploy/kind/kind-config.yaml"
       - "deploy.sh"
       - ".github/workflows/deploy-redis.yaml"
+      - ".github/workflows/_deploy-chart.yaml"
+      - ".github/scripts/smoke-redis.sh"
   pull_request:
     branches: [main]
     paths:
@@ -15,52 +18,15 @@ on:
       - "deploy/kind/kind-config.yaml"
       - "deploy.sh"
       - ".github/workflows/deploy-redis.yaml"
+      - ".github/workflows/_deploy-chart.yaml"
+      - ".github/scripts/smoke-redis.sh"
 
 permissions:
   contents: read
 
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
-
 jobs:
   deploy:
-    name: deploy.sh --up redis on ephemeral kind
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        shell: bash
-    env:
-      NAMESPACE: agentic-platform
-      RELEASE: platform-redis
-    steps:
-      - uses: actions/checkout@v5
-
-      - uses: azure/setup-helm@v4
-        with:
-          version: v3.21.0
-
-      - name: Create kind cluster
-        uses: helm/kind-action@v1
-        with:
-          config: deploy/kind/kind-config.yaml
-          cluster_name: agentic-platform
-
-      - name: Install via deploy.sh
-        run: ./deploy.sh --up redis
-
-      - name: Smoke test PING + MODULE LIST (verifies RedisJSON + RediSearch)
-        run: |
-          set -euo pipefail
-          POD="$(kubectl -n "$NAMESPACE" get pod -l app.kubernetes.io/instance="$RELEASE" -o jsonpath='{.items[0].metadata.name}')"
-          kubectl -n "$NAMESPACE" exec "$POD" -- redis-cli ping | tee /tmp/ping
-          grep -q PONG /tmp/ping
-          kubectl -n "$NAMESPACE" exec "$POD" -- redis-cli MODULE LIST | tee /tmp/modules
-          grep -qi search /tmp/modules || { echo "RediSearch missing"; exit 1; }
-          grep -qiE 'ReJSON|json' /tmp/modules || { echo "RedisJSON missing"; exit 1; }
-
-      - name: Dump diagnostics on failure
-        if: failure()
-        run: |
-          kubectl -n "$NAMESPACE" get all
-          kubectl -n "$NAMESPACE" describe pods
-          kubectl -n "$NAMESPACE" logs -l app.kubernetes.io/instance="$RELEASE" --all-containers --tail=200 || true
+    uses: ./.github/workflows/_deploy-chart.yaml
+    with:
+      chart: redis
+      smoke_script: smoke-redis.sh

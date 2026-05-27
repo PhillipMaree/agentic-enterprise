@@ -1,4 +1,5 @@
 name: deploy-otel-collector
+run-name: deploy-otel-collector
 
 on:
   push:
@@ -12,6 +13,9 @@ on:
       - "deploy/kind/kind-config.yaml"
       - "deploy.sh"
       - ".github/workflows/deploy-otel-collector.yaml"
+      - ".github/workflows/_deploy-chart.yaml"
+      - ".github/scripts/smoke-otel-collector.sh"
+      - ".github/scripts/_common.sh"
   pull_request:
     branches: [main]
     paths:
@@ -23,96 +27,21 @@ on:
       - "deploy/kind/kind-config.yaml"
       - "deploy.sh"
       - ".github/workflows/deploy-otel-collector.yaml"
+      - ".github/workflows/_deploy-chart.yaml"
+      - ".github/scripts/smoke-otel-collector.sh"
+      - ".github/scripts/_common.sh"
 
 permissions:
   contents: read
 
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+# This one needs the backends installed too, so smoke-otel-collector.sh
+# expects platform-tempo / loki / prometheus services to exist. The
+# reusable workflow installs only the named chart; we trigger the
+# dependents in a preceding job.
 
 jobs:
   deploy:
-    name: deploy.sh --up otel-collector (+ tempo + loki + prometheus)
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        shell: bash
-    env:
-      NAMESPACE: agentic-platform
-      RELEASE: platform-otel-collector
-    steps:
-      - uses: actions/checkout@v5
-
-      - uses: azure/setup-helm@v4
-        with:
-          version: v3.21.0
-
-      - name: Create kind cluster
-        uses: helm/kind-action@v1
-        with:
-          config: deploy/kind/kind-config.yaml
-          cluster_name: agentic-platform
-
-      - name: Install backends + otel-collector via deploy.sh
-        run: |
-          # Bring up the three backends first so the OTLP fan-out has
-          # somewhere to land. deploy.sh chains seaweedfs + bucket-init
-          # automatically.
-          ./deploy.sh --up tempo
-          ./deploy.sh --up loki
-          ./deploy.sh --up prometheus
-          ./deploy.sh --up otel-collector
-
-      - name: Smoke test OTLP fan-out (trace → Tempo, log → Loki, metric → Prom)
-        run: |
-          set -euo pipefail
-          # Service is `${RELEASE}-opentelemetry-collector` (release + chart name).
-          kubectl -n "$NAMESPACE" port-forward svc/${RELEASE}-opentelemetry-collector 4318:4318 >/tmp/pf-otel.log 2>&1 &
-          kubectl -n "$NAMESPACE" port-forward svc/platform-tempo                     3200:3200 >/tmp/pf-tempo.log 2>&1 &
-          kubectl -n "$NAMESPACE" port-forward svc/platform-loki                      3100:3100 >/tmp/pf-loki.log 2>&1 &
-          kubectl -n "$NAMESPACE" port-forward svc/platform-prometheus-server         9090:80   >/tmp/pf-prom.log 2>&1 &
-          trap 'jobs -p | xargs -r kill 2>/dev/null || true' EXIT
-          for i in $(seq 1 60); do
-            curl -fsS http://localhost:3200/ready >/dev/null 2>&1 && \
-            curl -fsS http://localhost:3100/ready >/dev/null 2>&1 && \
-            curl -fsS http://localhost:9090/-/ready >/dev/null 2>&1 && break
-            sleep 1
-          done
-
-          TRACE_ID="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-          NOW_NS="$(date +%s)000000000"
-          NEXT_NS="$(($(date +%s)+1))000000000"
-
-          curl -fsS -X POST http://localhost:4318/v1/traces \
-            -H 'Content-Type: application/json' \
-            -d "{\"resourceSpans\":[{\"resource\":{\"attributes\":[{\"key\":\"service.name\",\"value\":{\"stringValue\":\"ci-probe\"}}]},\"scopeSpans\":[{\"spans\":[{\"traceId\":\"${TRACE_ID}\",\"spanId\":\"bbbbbbbbbbbbbbbb\",\"name\":\"ci-otel-span\",\"kind\":1,\"startTimeUnixNano\":\"${NOW_NS}\",\"endTimeUnixNano\":\"${NEXT_NS}\"}]}]}]}"
-          curl -fsS -X POST http://localhost:4318/v1/logs \
-            -H 'Content-Type: application/json' \
-            -d "{\"resourceLogs\":[{\"resource\":{\"attributes\":[{\"key\":\"service.name\",\"value\":{\"stringValue\":\"ci-probe\"}}]},\"scopeLogs\":[{\"logRecords\":[{\"timeUnixNano\":\"${NOW_NS}\",\"severityText\":\"INFO\",\"body\":{\"stringValue\":\"hello otel log\"}}]}]}]}"
-          curl -fsS -X POST http://localhost:4318/v1/metrics \
-            -H 'Content-Type: application/json' \
-            -d "{\"resourceMetrics\":[{\"resource\":{\"attributes\":[{\"key\":\"service.name\",\"value\":{\"stringValue\":\"ci-probe\"}}]},\"scopeMetrics\":[{\"metrics\":[{\"name\":\"ci_probe_counter\",\"sum\":{\"dataPoints\":[{\"asInt\":\"42\",\"timeUnixNano\":\"${NOW_NS}\"}],\"aggregationTemporality\":2,\"isMonotonic\":true}}]}]}]}"
-
-          OK_TRACE=0; OK_LOG=0; OK_METRIC=0
-          for i in $(seq 1 30); do
-            [ "$OK_TRACE" = 0 ] && curl -fsS "http://localhost:3200/api/traces/${TRACE_ID}" 2>/dev/null | grep -q ci-otel-span && OK_TRACE=1 || true
-            [ "$OK_LOG" = 0 ] && curl -fsS --get \
-              --data-urlencode 'query={service_name="ci-probe"}' \
-              --data-urlencode "start=$((NOW_NS - 60000000000))" \
-              --data-urlencode "end=$((NOW_NS + 60000000000))" \
-              http://localhost:3100/loki/api/v1/query_range 2>/dev/null | grep -q 'hello otel log' && OK_LOG=1 || true
-            [ "$OK_METRIC" = 0 ] && curl -fsS 'http://localhost:9090/api/v1/query?query=ci_probe_counter' 2>/dev/null | grep -q '"42"' && OK_METRIC=1 || true
-            [ "$OK_TRACE$OK_LOG$OK_METRIC" = "111" ] && echo "all three signals arrived" && exit 0
-            sleep 2
-          done
-          echo "missing: trace=$OK_TRACE log=$OK_LOG metric=$OK_METRIC"
-          exit 1
-
-      - name: Dump diagnostics on failure
-        if: failure()
-        run: |
-          kubectl -n "$NAMESPACE" get all
-          kubectl -n "$NAMESPACE" describe pods
-          for c in otel-collector tempo loki prometheus seaweedfs; do
-            kubectl -n "$NAMESPACE" logs -l app.kubernetes.io/instance=platform-$c --all-containers --tail=200 || true
-          done
+    uses: ./.github/workflows/_deploy-chart.yaml
+    with:
+      chart: otel-collector
+      smoke_script: smoke-otel-collector.sh

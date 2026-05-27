@@ -10,6 +10,15 @@
 #
 # Reuses an existing kind cluster named agentic-platform if present.
 # All operations are idempotent — re-running --up is safe.
+#
+# Env flags:
+#   LITELLM_USE_MOCK_MODELS=1   Install LiteLLM with deploy/helm/litellm/
+#                               values.ci-mock.yaml overlay so the proxy
+#                               returns mock_response text instead of
+#                               calling real providers. Used by CI.
+#   ANTHROPIC_API_KEY=...       Stored in the platform-litellm-secrets
+#   OPENAI_API_KEY=...          Secret by deploy.sh. Without these the
+#                               Secret holds `ci-fake` placeholders.
 
 set -euo pipefail
 
@@ -174,20 +183,35 @@ install_chart() {
   # DIRECT_CHARTS above for why).
   if [ -n "${DIRECT_CHARTS[$chart]:-}" ]; then
     IFS='|' read -r repo upstream version <<<"${DIRECT_CHARTS[$chart]}"
-    step "helm install $rel (upstream $upstream@$version with $dir/values.yaml)"
-    local repo_args
+
+    # Per-chart overlay flags. LITELLM_USE_MOCK_MODELS=1 swaps the
+    # production model list for mock_response models — used by CI to
+    # exercise the full proxy path without real provider keys.
+    local overlay_files=()
+    if [ "$chart" = "litellm" ] && [ "${LITELLM_USE_MOCK_MODELS:-0}" = "1" ]; then
+      if [ -f "$dir/values.ci-mock.yaml" ]; then
+        overlay_files+=(-f "$dir/values.ci-mock.yaml")
+        ok "applying $dir/values.ci-mock.yaml (LITELLM_USE_MOCK_MODELS=1)"
+      else
+        warn "LITELLM_USE_MOCK_MODELS=1 set but $dir/values.ci-mock.yaml missing"
+      fi
+    fi
+
+    step "helm install $rel (upstream $upstream@$version)"
     # OCI registries are referenced as oci://... and use a different
     # install syntax (no `--repo` flag — the URI IS the chart).
     if [[ "$repo" == oci://* ]]; then
       helm -n "$NS" upgrade --install "$rel" "$repo/$upstream" \
         --version "$version" \
         -f "$dir/values.yaml" \
+        "${overlay_files[@]}" \
         --wait --timeout 10m
     else
       helm -n "$NS" upgrade --install "$rel" "$upstream" \
         --repo "$repo" \
         --version "$version" \
         -f "$dir/values.yaml" \
+        "${overlay_files[@]}" \
         --wait --timeout 10m
     fi
     return $?

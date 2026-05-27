@@ -1,4 +1,5 @@
 name: deploy-obot
+run-name: deploy-obot
 
 on:
   push:
@@ -8,6 +9,9 @@ on:
       - "deploy/kind/kind-config.yaml"
       - "deploy.sh"
       - ".github/workflows/deploy-obot.yaml"
+      - ".github/workflows/_deploy-chart.yaml"
+      - ".github/scripts/smoke-obot.sh"
+      - ".github/scripts/_common.sh"
   pull_request:
     branches: [main]
     paths:
@@ -15,60 +19,16 @@ on:
       - "deploy/kind/kind-config.yaml"
       - "deploy.sh"
       - ".github/workflows/deploy-obot.yaml"
+      - ".github/workflows/_deploy-chart.yaml"
+      - ".github/scripts/smoke-obot.sh"
+      - ".github/scripts/_common.sh"
 
 permissions:
   contents: read
 
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
-
 jobs:
   deploy:
-    name: deploy.sh --up obot on ephemeral kind
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        shell: bash
-    env:
-      NAMESPACE: agentic-platform
-      RELEASE: platform-obot
-    steps:
-      - uses: actions/checkout@v5
-
-      - uses: azure/setup-helm@v4
-        with:
-          version: v3.21.0
-
-      - name: Create kind cluster
-        uses: helm/kind-action@v1
-        with:
-          config: deploy/kind/kind-config.yaml
-          cluster_name: agentic-platform
-
-      - name: Install via deploy.sh
-        run: ./deploy.sh --up obot
-
-      - name: Smoke test Obot HTTP endpoint
-        run: |
-          set -euo pipefail
-          # Service name is `<release>-obot` (Helm release + chart name).
-          kubectl -n "$NAMESPACE" port-forward svc/${RELEASE}-obot 8080:8080 >/tmp/pf.log 2>&1 &
-          PF=$!
-          trap 'kill $PF 2>/dev/null || true' EXIT
-          for i in $(seq 1 60); do
-            CODE="$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/api/health || echo 000)"
-            # 200 OK (open) or 403 (auth required but server up) both prove
-            # the gateway is serving HTTP.
-            case "$CODE" in 200|403) echo "obot up (HTTP $CODE)"; exit 0;; esac
-            sleep 2
-          done
-          echo "obot never responded"
-          cat /tmp/pf.log || true
-          exit 1
-
-      - name: Dump diagnostics on failure
-        if: failure()
-        run: |
-          kubectl -n "$NAMESPACE" get all
-          kubectl -n "$NAMESPACE" describe pods
-          kubectl -n "$NAMESPACE" logs -l app.kubernetes.io/instance="$RELEASE" --all-containers --tail=200 || true
+    uses: ./.github/workflows/_deploy-chart.yaml
+    with:
+      chart: obot
+      smoke_script: smoke-obot.sh

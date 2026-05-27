@@ -1,4 +1,5 @@
 name: deploy-litellm
+run-name: deploy-litellm
 
 on:
   push:
@@ -12,6 +13,9 @@ on:
       - "deploy/kind/kind-config.yaml"
       - "deploy.sh"
       - ".github/workflows/deploy-litellm.yaml"
+      - ".github/workflows/_deploy-chart.yaml"
+      - ".github/scripts/smoke-litellm.sh"
+      - ".github/scripts/_common.sh"
   pull_request:
     branches: [main]
     paths:
@@ -23,62 +27,17 @@ on:
       - "deploy/kind/kind-config.yaml"
       - "deploy.sh"
       - ".github/workflows/deploy-litellm.yaml"
+      - ".github/workflows/_deploy-chart.yaml"
+      - ".github/scripts/smoke-litellm.sh"
+      - ".github/scripts/_common.sh"
 
 permissions:
   contents: read
 
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
-
 jobs:
   deploy:
-    name: deploy.sh --up litellm on ephemeral kind
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        shell: bash
-    env:
-      NAMESPACE: agentic-platform
-      RELEASE: platform-litellm
-    steps:
-      - uses: actions/checkout@v5
-
-      - uses: azure/setup-helm@v4
-        with:
-          version: v3.21.0
-
-      - name: Create kind cluster
-        uses: helm/kind-action@v1
-        with:
-          config: deploy/kind/kind-config.yaml
-          cluster_name: agentic-platform
-
-      - name: Install via deploy.sh (auto-installs postgres+redis+presidio+otel, creates DB + secret)
-        # No real provider keys → litellm will reject Anthropic/OpenAI calls,
-        # but the proxy itself comes up and answers /health/readiness.
-        run: ./deploy.sh --up litellm
-
-      - name: Smoke test /health/readiness + /metrics public
-        run: |
-          set -euo pipefail
-          kubectl -n "$NAMESPACE" port-forward svc/${RELEASE} 4000:4000 >/tmp/pf.log 2>&1 &
-          PF=$!
-          trap 'kill $PF 2>/dev/null || true' EXIT
-          for i in $(seq 1 90); do
-            curl -fsS http://localhost:4000/health/readiness >/dev/null 2>&1 && break
-            sleep 2
-          done
-          curl -fsS http://localhost:4000/health/readiness | tee /tmp/ready.json
-          grep -q '"healthy"' /tmp/ready.json
-          # /metrics is public per `require_auth_for_metrics_endpoint: false`.
-          curl -fsSL -o /tmp/metrics.txt http://localhost:4000/metrics
-          grep -q '^# HELP' /tmp/metrics.txt
-
-      - name: Dump diagnostics on failure
-        if: failure()
-        run: |
-          kubectl -n "$NAMESPACE" get all
-          kubectl -n "$NAMESPACE" describe pods
-          for c in litellm postgres redis presidio otel-collector; do
-            kubectl -n "$NAMESPACE" logs -l app.kubernetes.io/instance=platform-$c --all-containers --tail=200 || true
-          done
+    uses: ./.github/workflows/_deploy-chart.yaml
+    with:
+      chart: litellm
+      smoke_script: smoke-litellm.sh
+      mock_litellm: true

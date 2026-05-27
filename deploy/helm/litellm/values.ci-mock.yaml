@@ -1,0 +1,34 @@
+# CI-only overlay for platform-litellm. Replaces the production model list
+# with `mock_response` models so the proxy returns canned text instead of
+# calling real Anthropic / OpenAI / etc. Lets CI exercise the full request
+# path (auth, presidio guardrail, postgres logging, OTel emission)
+# without provider credits or repo secrets.
+#
+# Applied automatically by deploy.sh when LITELLM_USE_MOCK_MODELS=1.
+# Same `model_name`s as the production values so test prompts written
+# against either still work.
+
+proxy_config:
+  model_list:
+    - model_name: claude-sonnet-4-6
+      litellm_params:
+        model: anthropic/claude-3-haiku
+        mock_response: "hello from ci (claude-sonnet-4-6 mock)"
+    - model_name: claude-opus-4-7
+      litellm_params:
+        model: anthropic/claude-3-haiku
+        mock_response: "hello from ci (claude-opus-4-7 mock)"
+    - model_name: claude-haiku-4-5
+      litellm_params:
+        model: anthropic/claude-3-haiku
+        mock_response: "hello from ci (claude-haiku-4-5 mock)"
+    - model_name: gpt-4o
+      litellm_params:
+        model: openai/gpt-4o
+        mock_response: "hello from ci (gpt-4o mock)"
+    # Explicit mock alias for tests that don't care which provider name
+    # they use.
+    - model_name: mock-model
+      litellm_params:
+        model: anthropic/claude-3-haiku
+        mock_response: "ok"

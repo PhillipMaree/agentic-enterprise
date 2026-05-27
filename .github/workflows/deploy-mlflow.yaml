@@ -1,4 +1,5 @@
 name: deploy-mlflow
+run-name: deploy-mlflow
 
 on:
   push:
@@ -10,6 +11,9 @@ on:
       - "deploy/kind/kind-config.yaml"
       - "deploy.sh"
       - ".github/workflows/deploy-mlflow.yaml"
+      - ".github/workflows/_deploy-chart.yaml"
+      - ".github/scripts/smoke-mlflow.sh"
+      - ".github/scripts/_common.sh"
   pull_request:
     branches: [main]
     paths:
@@ -19,74 +23,16 @@ on:
       - "deploy/kind/kind-config.yaml"
       - "deploy.sh"
       - ".github/workflows/deploy-mlflow.yaml"
+      - ".github/workflows/_deploy-chart.yaml"
+      - ".github/scripts/smoke-mlflow.sh"
+      - ".github/scripts/_common.sh"
 
 permissions:
   contents: read
 
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
-
 jobs:
   deploy:
-    name: deploy.sh --up mlflow on ephemeral kind
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        shell: bash
-    env:
-      NAMESPACE: agentic-platform
-      RELEASE: platform-mlflow
-    steps:
-      - uses: actions/checkout@v5
-
-      - uses: azure/setup-helm@v4
-        with:
-          version: v3.21.0
-
-      - name: Create kind cluster
-        uses: helm/kind-action@v1
-        with:
-          config: deploy/kind/kind-config.yaml
-          cluster_name: agentic-platform
-
-      - name: Install via deploy.sh (auto-installs postgres + seaweedfs + buckets)
-        run: ./deploy.sh --up mlflow
-
-      - name: Smoke test create experiment + log run + read back
-        run: |
-          set -euo pipefail
-          kubectl -n "$NAMESPACE" port-forward svc/${RELEASE} 5000:5000 >/tmp/pf.log 2>&1 &
-          PF=$!
-          trap 'kill $PF 2>/dev/null || true' EXIT
-          for i in $(seq 1 60); do
-            curl -fsS http://localhost:5000/health >/dev/null 2>&1 && break
-            sleep 1
-          done
-
-          EXP_RESP="$(curl -fsS -X POST http://localhost:5000/api/2.0/mlflow/experiments/create \
-            -H 'Content-Type: application/json' -d '{"name":"ci-probe"}')"
-          EXP_ID="$(echo "$EXP_RESP" | grep -oE '"experiment_id":"[0-9]+"' | grep -oE '[0-9]+')"
-          [ -n "$EXP_ID" ] || { echo "no experiment_id"; exit 1; }
-
-          RUN_RESP="$(curl -fsS -X POST http://localhost:5000/api/2.0/mlflow/runs/create \
-            -H 'Content-Type: application/json' \
-            -d "{\"experiment_id\":\"${EXP_ID}\",\"start_time\":$(date +%s000)}")"
-          RUN_ID="$(echo "$RUN_RESP" | grep -oE '"run_id":"[a-f0-9]+"' | grep -oE '[a-f0-9]{32}')"
-          [ -n "$RUN_ID" ] || { echo "no run_id"; exit 1; }
-
-          curl -fsS -X POST http://localhost:5000/api/2.0/mlflow/runs/log-metric \
-            -H 'Content-Type: application/json' \
-            -d "{\"run_id\":\"${RUN_ID}\",\"key\":\"ci_score\",\"value\":0.99,\"timestamp\":$(date +%s000),\"step\":0}"
-
-          curl -fsS "http://localhost:5000/api/2.0/mlflow/runs/get?run_id=${RUN_ID}" | tee /tmp/run.json
-          grep -q ci_score /tmp/run.json
-          grep -q 0.99     /tmp/run.json
-
-      - name: Dump diagnostics on failure
-        if: failure()
-        run: |
-          kubectl -n "$NAMESPACE" get all
-          kubectl -n "$NAMESPACE" describe pods
-          for c in mlflow postgres seaweedfs; do
-            kubectl -n "$NAMESPACE" logs -l app.kubernetes.io/instance=platform-$c --all-containers --tail=200 || true
-          done
+    uses: ./.github/workflows/_deploy-chart.yaml
+    with:
+      chart: mlflow
+      smoke_script: smoke-mlflow.sh
