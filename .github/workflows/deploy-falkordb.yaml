@@ -25,8 +25,8 @@ jobs:
       run:
         shell: bash
     env:
-      NAMESPACE: agentic-ai
-      RELEASE: agentic-falkordb
+      NAMESPACE: agentic-platform
+      RELEASE: platform-falkordb
       CHART_DIR: deploy/helm/falkordb
     steps:
       - name: Checkout
@@ -47,7 +47,7 @@ jobs:
         uses: helm/kind-action@v1
         with:
           config: deploy/kind/kind-config.yaml
-          cluster_name: agentic-ai
+          cluster_name: agentic-platform
 
       - name: Create namespace
         run: kubectl create namespace "$NAMESPACE"

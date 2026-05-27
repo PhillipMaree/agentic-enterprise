@@ -1,7 +1,7 @@
-# agentic-redis
+# platform-redis
 
 Minimal Helm chart that deploys **Redis 8** (`redis:8`) into the
-`agentic-ai` namespace.
+`agentic-platform` namespace.
 
 Redis 8 bundles the modules required by the LangGraph Redis checkpointer
 natively in the open-source distribution:
@@ -20,8 +20,8 @@ No separate `redis-stack` image or module loading is needed. Verify with
 ## Install
 
 ```bash
-helm install agentic-redis deploy/helm/redis \
-  --namespace agentic-ai --create-namespace \
+helm install platform-redis deploy/helm/redis \
+  --namespace agentic-platform --create-namespace \
   --wait --timeout 5m
 ```
 
@@ -34,7 +34,7 @@ helm install agentic-redis deploy/helm/redis \
 ## Reach the service
 
 ```bash
-kubectl -n agentic-ai port-forward svc/agentic-redis 6379:6379
+kubectl -n agentic-platform port-forward svc/platform-redis 6379:6379
 redis-cli -h 127.0.0.1 -p 6379 ping
 redis-cli -h 127.0.0.1 -p 6379 MODULE LIST
 ```
@@ -45,6 +45,6 @@ recommended way to browse data — there's no in-cluster UI in this chart.
 ## Uninstall
 
 ```bash
-helm uninstall agentic-redis -n agentic-ai
-kubectl delete pvc agentic-redis -n agentic-ai
+helm uninstall platform-redis -n agentic-platform
+kubectl delete pvc platform-redis -n agentic-platform
 ```

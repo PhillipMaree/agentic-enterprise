@@ -1,7 +1,7 @@
-# agentic-seaweedfs
+# platform-seaweedfs
 
 Umbrella Helm chart that deploys [SeaweedFS](https://github.com/seaweedfs/seaweedfs)
-in `allInOne` mode with the S3 gateway enabled, for the `agentic-ai` namespace.
+in `allInOne` mode with the S3 gateway enabled, for the `agentic-platform` namespace.
 
 Rendering is delegated to the upstream `seaweedfs/seaweedfs` chart; this chart
 only ships `values.yaml` overrides tuned for local dev on kind.
@@ -18,8 +18,8 @@ only ships `values.yaml` overrides tuned for local dev on kind.
 
 ```bash
 helm dependency update deploy/helm/seaweedfs
-helm install agentic-seaweedfs deploy/helm/seaweedfs \
-  --namespace agentic-ai --create-namespace \
+helm install platform-seaweedfs deploy/helm/seaweedfs \
+  --namespace agentic-platform --create-namespace \
   --wait --timeout 5m
 ```
 
@@ -33,12 +33,12 @@ helm install agentic-seaweedfs deploy/helm/seaweedfs \
 | 8333 | S3 gateway |
 
 The chart emits a single `Deployment` and one `Service` named
-`agentic-seaweedfs-all-in-one` exposing all the ports above.
+`platform-seaweedfs-all-in-one` exposing all the ports above.
 
 Port-forward the S3 endpoint to your host:
 
 ```bash
-kubectl -n agentic-ai port-forward svc/agentic-seaweedfs-all-in-one 8333:8333
+kubectl -n agentic-platform port-forward svc/platform-seaweedfs-all-in-one 8333:8333
 ```
 
 ## Enabling S3 auth
@@ -58,6 +58,6 @@ seaweedfs:
 ## Uninstall
 
 ```bash
-helm uninstall agentic-seaweedfs -n agentic-ai
-kubectl delete pvc -n agentic-ai -l app.kubernetes.io/instance=agentic-seaweedfs
+helm uninstall platform-seaweedfs -n agentic-platform
+kubectl delete pvc -n agentic-platform -l app.kubernetes.io/instance=platform-seaweedfs
 ```

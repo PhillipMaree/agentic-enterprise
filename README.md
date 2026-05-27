@@ -1,4 +1,4 @@
-# agentic-infrastructure
+# agentic-platform
 
 General global infrastructure services for supporting agentic AI frameworks,
 workflows, and runtime environments.
@@ -8,7 +8,7 @@ Each service ships with two consumption surfaces:
 - A **Docker Compose** definition for the fastest possible local dev loop.
 - A **Helm chart** that deploys the service to a Kubernetes cluster — for now,
   a local [kind](https://kind.sigs.k8s.io/) cluster on your PC. The cluster
-  namespace is **`agentic-ai`**.
+  namespace is **`agentic-platform`**.
 
 > All deployments are currently dev-only. Auth is left off (or set to defaults)
 > for ergonomics. Do not point these manifests at a shared cluster as-is.
@@ -73,26 +73,26 @@ Prerequisites: [kind](https://kind.sigs.k8s.io/), `kubectl`, and
 
 ```bash
 # 1. Cluster
-kind create cluster --config deploy/kind/kind-config.yaml --name agentic-ai
+kind create cluster --config deploy/kind/kind-config.yaml --name agentic-platform
 
 # 2. Install each service (only run the ones you need)
 helm dependency update deploy/helm/seaweedfs
-helm install agentic-seaweedfs deploy/helm/seaweedfs -n agentic-ai --create-namespace --wait --timeout 5m
-helm install agentic-redis     deploy/helm/redis     -n agentic-ai --create-namespace --wait --timeout 5m
-helm install agentic-postgres  deploy/helm/postgres  -n agentic-ai --create-namespace --wait --timeout 5m
-helm install agentic-falkordb  deploy/helm/falkordb  -n agentic-ai --create-namespace --wait --timeout 5m
+helm install platform-seaweedfs deploy/helm/seaweedfs -n agentic-platform --create-namespace --wait --timeout 5m
+helm install platform-redis     deploy/helm/redis     -n agentic-platform --create-namespace --wait --timeout 5m
+helm install platform-postgres  deploy/helm/postgres  -n agentic-platform --create-namespace --wait --timeout 5m
+helm install platform-falkordb  deploy/helm/falkordb  -n agentic-platform --create-namespace --wait --timeout 5m
 
-kubectl -n agentic-ai get pods,svc,pvc
+kubectl -n agentic-platform get pods,svc,pvc
 
 # 3. Reach a service from the host (port-forward in a separate terminal each)
-kubectl -n agentic-ai port-forward svc/agentic-seaweedfs-all-in-one 8333:8333
-kubectl -n agentic-ai port-forward svc/agentic-redis                6379:6379
-kubectl -n agentic-ai port-forward svc/agentic-postgres             5432:5432
-kubectl -n agentic-ai port-forward svc/agentic-falkordb             6380:6379 3000:3000
+kubectl -n agentic-platform port-forward svc/platform-seaweedfs-all-in-one 8333:8333
+kubectl -n agentic-platform port-forward svc/platform-redis                6379:6379
+kubectl -n agentic-platform port-forward svc/platform-postgres             5432:5432
+kubectl -n agentic-platform port-forward svc/platform-falkordb             6380:6379 3000:3000
 
 # Tear down
-helm uninstall agentic-seaweedfs agentic-redis agentic-postgres agentic-falkordb -n agentic-ai
-kind delete cluster --name agentic-ai
+helm uninstall platform-seaweedfs platform-redis platform-postgres platform-falkordb -n agentic-platform
+kind delete cluster --name agentic-platform
 ```
 
 Chart-level READMEs cover per-service options (auth toggles, resource tuning):
