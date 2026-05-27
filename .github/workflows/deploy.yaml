@@ -1,0 +1,341 @@
+name: deploy
+run-name: deploy (${{ github.event.head_commit.message || github.ref_name }})
+
+# One workflow, many jobs. Jobs run in dependency order; downstream
+# jobs are skipped if any of their `needs:` failed (i.e. seaweedfs
+# failing means tempo/loki/mlflow/e2e all skip).
+#
+# Click into the run → see all jobs as a graph. Skipped jobs (path-
+# filter mismatched or dep failed) show greyed out.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "deploy/**"
+      - "deploy.sh"
+      - ".github/workflows/deploy.yaml"
+      - ".github/workflows/_deploy-chart.yaml"
+      - ".github/scripts/**"
+  pull_request:
+    branches: [main]
+    paths:
+      - "deploy/**"
+      - "deploy.sh"
+      - ".github/workflows/deploy.yaml"
+      - ".github/workflows/_deploy-chart.yaml"
+      - ".github/scripts/**"
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  # ----- Detect which charts changed --------------------------------------
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      seaweedfs:       ${{ steps.filter.outputs.seaweedfs }}
+      redis:           ${{ steps.filter.outputs.redis }}
+      postgres:        ${{ steps.filter.outputs.postgres }}
+      falkordb:        ${{ steps.filter.outputs.falkordb }}
+      presidio:        ${{ steps.filter.outputs.presidio }}
+      obot:            ${{ steps.filter.outputs.obot }}
+      prometheus:      ${{ steps.filter.outputs.prometheus }}
+      grafana:         ${{ steps.filter.outputs.grafana }}
+      tempo:           ${{ steps.filter.outputs.tempo }}
+      loki:            ${{ steps.filter.outputs.loki }}
+      otel-collector:  ${{ steps.filter.outputs.otel-collector }}
+      mlflow:          ${{ steps.filter.outputs.mlflow }}
+      litellm:         ${{ steps.filter.outputs.litellm }}
+      e2e:             ${{ steps.filter.outputs.e2e }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            seaweedfs:
+              - 'deploy/helm/seaweedfs/**'
+              - 'deploy/kind/kind-config.yaml'
+              - 'deploy.sh'
+              - '.github/workflows/deploy.yaml'
+              - '.github/workflows/_deploy-chart.yaml'
+              - '.github/scripts/smoke-seaweedfs.sh'
+              - '.github/scripts/_common.sh'
+            redis:
+              - 'deploy/helm/redis/**'
+              - 'deploy/kind/kind-config.yaml'
+              - 'deploy.sh'
+              - '.github/workflows/deploy.yaml'
+              - '.github/workflows/_deploy-chart.yaml'
+              - '.github/scripts/smoke-redis.sh'
+            postgres:
+              - 'deploy/helm/postgres/**'
+              - 'deploy/kind/kind-config.yaml'
+              - 'deploy.sh'
+              - '.github/workflows/deploy.yaml'
+              - '.github/workflows/_deploy-chart.yaml'
+              - '.github/scripts/smoke-postgres.sh'
+            falkordb:
+              - 'deploy/helm/falkordb/**'
+              - 'deploy/kind/kind-config.yaml'
+              - 'deploy.sh'
+              - '.github/workflows/deploy.yaml'
+              - '.github/workflows/_deploy-chart.yaml'
+              - '.github/scripts/smoke-falkordb.sh'
+            presidio:
+              - 'deploy/helm/presidio/**'
+              - 'deploy/kind/kind-config.yaml'
+              - 'deploy.sh'
+              - '.github/workflows/deploy.yaml'
+              - '.github/workflows/_deploy-chart.yaml'
+              - '.github/scripts/smoke-presidio.sh'
+              - '.github/scripts/_common.sh'
+            obot:
+              - 'deploy/helm/obot/**'
+              - 'deploy/kind/kind-config.yaml'
+              - 'deploy.sh'
+              - '.github/workflows/deploy.yaml'
+              - '.github/workflows/_deploy-chart.yaml'
+              - '.github/scripts/smoke-obot.sh'
+              - '.github/scripts/_common.sh'
+            prometheus:
+              - 'deploy/helm/prometheus/**'
+              - 'deploy/kind/kind-config.yaml'
+              - 'deploy.sh'
+              - '.github/workflows/deploy.yaml'
+              - '.github/workflows/_deploy-chart.yaml'
+              - '.github/scripts/smoke-prometheus.sh'
+              - '.github/scripts/_common.sh'
+            grafana:
+              - 'deploy/helm/grafana/**'
+              - 'deploy/kind/kind-config.yaml'
+              - 'deploy.sh'
+              - '.github/workflows/deploy.yaml'
+              - '.github/workflows/_deploy-chart.yaml'
+              - '.github/scripts/smoke-grafana.sh'
+              - '.github/scripts/_common.sh'
+            tempo:
+              - 'deploy/helm/tempo/**'
+              - 'deploy/helm/seaweedfs/**'
+              - 'deploy/kind/kind-config.yaml'
+              - 'deploy.sh'
+              - '.github/workflows/deploy.yaml'
+              - '.github/workflows/_deploy-chart.yaml'
+              - '.github/scripts/smoke-tempo.sh'
+              - '.github/scripts/_common.sh'
+            loki:
+              - 'deploy/helm/loki/**'
+              - 'deploy/helm/seaweedfs/**'
+              - 'deploy/kind/kind-config.yaml'
+              - 'deploy.sh'
+              - '.github/workflows/deploy.yaml'
+              - '.github/workflows/_deploy-chart.yaml'
+              - '.github/scripts/smoke-loki.sh'
+              - '.github/scripts/_common.sh'
+            otel-collector:
+              - 'deploy/helm/otel-collector/**'
+              - 'deploy/kind/kind-config.yaml'
+              - 'deploy.sh'
+              - '.github/workflows/deploy.yaml'
+              - '.github/workflows/_deploy-chart.yaml'
+              - '.github/scripts/smoke-otel-collector.sh'
+              - '.github/scripts/_common.sh'
+            mlflow:
+              - 'deploy/helm/mlflow/**'
+              - 'deploy/helm/postgres/**'
+              - 'deploy/helm/seaweedfs/**'
+              - 'deploy/kind/kind-config.yaml'
+              - 'deploy.sh'
+              - '.github/workflows/deploy.yaml'
+              - '.github/workflows/_deploy-chart.yaml'
+              - '.github/scripts/smoke-mlflow.sh'
+              - '.github/scripts/_common.sh'
+            litellm:
+              - 'deploy/helm/litellm/**'
+              - 'deploy/helm/postgres/**'
+              - 'deploy/helm/redis/**'
+              - 'deploy/helm/presidio/**'
+              - 'deploy/helm/otel-collector/**'
+              - 'deploy/kind/kind-config.yaml'
+              - 'deploy.sh'
+              - '.github/workflows/deploy.yaml'
+              - '.github/workflows/_deploy-chart.yaml'
+              - '.github/scripts/smoke-litellm.sh'
+              - '.github/scripts/_common.sh'
+            e2e:
+              - 'deploy/helm/**'
+              - 'deploy/kind/kind-config.yaml'
+              - 'deploy.sh'
+              - '.github/workflows/deploy.yaml'
+              - '.github/scripts/smoke-platform-e2e.sh'
+              - '.github/scripts/_common.sh'
+
+  # ----- Layer 0: infra + hand-written charts (no chart deps) -------------
+  # These run in parallel. Each gated by its own paths-filter.
+
+  seaweedfs:
+    needs: changes
+    if: needs.changes.outputs.seaweedfs == 'true'
+    uses: ./.github/workflows/_deploy-chart.yaml
+    with: { chart: seaweedfs, smoke_script: smoke-seaweedfs.sh }
+
+  redis:
+    needs: changes
+    if: needs.changes.outputs.redis == 'true'
+    uses: ./.github/workflows/_deploy-chart.yaml
+    with: { chart: redis, smoke_script: smoke-redis.sh }
+
+  postgres:
+    needs: changes
+    if: needs.changes.outputs.postgres == 'true'
+    uses: ./.github/workflows/_deploy-chart.yaml
+    with: { chart: postgres, smoke_script: smoke-postgres.sh }
+
+  falkordb:
+    needs: changes
+    if: needs.changes.outputs.falkordb == 'true'
+    uses: ./.github/workflows/_deploy-chart.yaml
+    with: { chart: falkordb, smoke_script: smoke-falkordb.sh }
+
+  presidio:
+    needs: changes
+    if: needs.changes.outputs.presidio == 'true'
+    uses: ./.github/workflows/_deploy-chart.yaml
+    with: { chart: presidio, smoke_script: smoke-presidio.sh }
+
+  obot:
+    needs: changes
+    if: needs.changes.outputs.obot == 'true'
+    uses: ./.github/workflows/_deploy-chart.yaml
+    with: { chart: obot, smoke_script: smoke-obot.sh }
+
+  prometheus:
+    needs: changes
+    if: needs.changes.outputs.prometheus == 'true'
+    uses: ./.github/workflows/_deploy-chart.yaml
+    with: { chart: prometheus, smoke_script: smoke-prometheus.sh }
+
+  grafana:
+    needs: changes
+    if: needs.changes.outputs.grafana == 'true'
+    uses: ./.github/workflows/_deploy-chart.yaml
+    with: { chart: grafana, smoke_script: smoke-grafana.sh }
+
+  otel-collector:
+    needs: changes
+    if: needs.changes.outputs.otel-collector == 'true'
+    uses: ./.github/workflows/_deploy-chart.yaml
+    with: { chart: otel-collector, smoke_script: smoke-otel-collector.sh }
+
+  # ----- Layer 1: need seaweedfs ------------------------------------------
+
+  tempo:
+    needs: [changes, seaweedfs]
+    if: |
+      always() &&
+      needs.changes.outputs.tempo == 'true' &&
+      needs.seaweedfs.result != 'failure'
+    uses: ./.github/workflows/_deploy-chart.yaml
+    with: { chart: tempo, smoke_script: smoke-tempo.sh }
+
+  loki:
+    needs: [changes, seaweedfs]
+    if: |
+      always() &&
+      needs.changes.outputs.loki == 'true' &&
+      needs.seaweedfs.result != 'failure'
+    uses: ./.github/workflows/_deploy-chart.yaml
+    with: { chart: loki, smoke_script: smoke-loki.sh }
+
+  # ----- Layer 2: need postgres + seaweedfs -------------------------------
+
+  mlflow:
+    needs: [changes, postgres, seaweedfs]
+    if: |
+      always() &&
+      needs.changes.outputs.mlflow == 'true' &&
+      needs.postgres.result != 'failure' &&
+      needs.seaweedfs.result != 'failure'
+    uses: ./.github/workflows/_deploy-chart.yaml
+    with: { chart: mlflow, smoke_script: smoke-mlflow.sh }
+
+  # ----- Layer 3: need postgres + redis + presidio + otel-collector -------
+
+  litellm:
+    needs: [changes, postgres, redis, presidio, otel-collector]
+    if: |
+      always() &&
+      needs.changes.outputs.litellm == 'true' &&
+      needs.postgres.result != 'failure' &&
+      needs.redis.result != 'failure' &&
+      needs.presidio.result != 'failure' &&
+      needs['otel-collector'].result != 'failure'
+    uses: ./.github/workflows/_deploy-chart.yaml
+    with:
+      chart: litellm
+      smoke_script: smoke-litellm.sh
+      mock_litellm: true
+
+  # ----- Layer 4: full-stack e2e (needs everything not to have failed) ----
+
+  e2e:
+    needs:
+      - changes
+      - seaweedfs
+      - redis
+      - postgres
+      - falkordb
+      - presidio
+      - obot
+      - prometheus
+      - grafana
+      - otel-collector
+      - tempo
+      - loki
+      - mlflow
+      - litellm
+    if: |
+      always() &&
+      needs.changes.outputs.e2e == 'true' &&
+      !contains(needs.*.result, 'failure')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    env:
+      NAMESPACE: agentic-platform
+    steps:
+      - uses: actions/checkout@v5
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /opt/hostedtoolcache/CodeQL || true
+          df -h
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.21.0
+      - uses: helm/kind-action@v1
+        with:
+          config: deploy/kind/kind-config.yaml
+          cluster_name: agentic-platform
+      - name: ./deploy.sh --up (full stack, mock litellm)
+        env:
+          LITELLM_USE_MOCK_MODELS: "1"
+        run: ./deploy.sh --up
+      - run: kubectl -n "$NAMESPACE" get pods,svc
+      - name: Smoke
+        run: bash .github/scripts/smoke-platform-e2e.sh
+      - name: Dump diagnostics on failure
+        if: failure()
+        run: |
+          kubectl -n "$NAMESPACE" get all
+          kubectl -n "$NAMESPACE" describe pods | tail -300
+          for rel in $(helm -n "$NAMESPACE" list -q 2>/dev/null); do
+            echo "=== $rel ==="
+            kubectl -n "$NAMESPACE" logs -l "app.kubernetes.io/instance=$rel" --all-containers --tail=100 || true
+          done
