@@ -25,15 +25,18 @@ scrape_configs:
     static_configs:
       - targets: ["otel-collector:8888"]
 
-  # LiteLLM exposes Prometheus metrics on its main HTTP port.
+  # LiteLLM exposes Prometheus metrics on /metrics. The endpoint is made
+  # public via `require_auth_for_metrics_endpoint: false` in litellm's
+  # config, so no auth header is needed here.
   - job_name: litellm
-    metrics_path: /metrics
+    # Trailing slash: LiteLLM redirects /metrics → /metrics/ (307) and
+    # Prometheus does not follow redirects on scrapes.
+    metrics_path: /metrics/
     static_configs:
       - targets: ["litellm:4000"]
 
-  # MLflow exposes /metrics when run with prometheus_flask_exporter enabled.
-  # Safe to leave — Prometheus just marks the target down if absent.
-  - job_name: mlflow
-    metrics_path: /metrics
-    static_configs:
-      - targets: ["mlflow:5000"]
+  # NOTE: MLflow does NOT expose /metrics in the default ghcr.io/mlflow/mlflow
+  # image — it needs `prometheus_flask_exporter` installed and enabled at
+  # startup. Removed to avoid noise from a permanently-down scrape target.
+  # If you want MLflow metrics, install the exporter and add the scrape
+  # config back here.

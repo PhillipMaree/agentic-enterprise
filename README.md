@@ -18,6 +18,11 @@ Two consumption surfaces, both running the same set of services:
 
 ## Architecture
 
+![agentic-platform architecture](docs/img/architecture.png)
+
+<details>
+<summary>Mermaid source (re-render with <code>mmdc -i README.md -o docs/img/architecture.png</code> or view via the GitHub renderer)</summary>
+
 ```mermaid
 flowchart TB
     subgraph clients [Agentic apps]
@@ -88,6 +93,8 @@ flowchart TB
     class redis,postgres,falkordb,seaweedfs infraplane
 ```
 
+</details>
+
 **Reading the diagram**
 
 - Solid arrows are request-path (synchronous: PII redaction, cache, DB writes, S3 puts).
@@ -97,6 +104,140 @@ flowchart TB
   else is internal to the platform.
 - **SeaweedFS is the S3 backend for everything**: MLflow artifacts, Tempo
   trace blocks, Loki chunks + index. One object store, four buckets.
+
+## Getting Started
+
+Two ways to run the stack locally. Pick one. Both end with the same set of
+services reachable on `localhost`, with the same credentials.
+
+### Prerequisites
+
+| Tool | Compose path | Kubernetes path |
+|---|---|---|
+| Docker Engine 25+ | required | required (kind runs in Docker) |
+| Docker Compose v2 | required | — |
+| [kind](https://kind.sigs.k8s.io/) | — | required |
+| `kubectl` | — | required |
+| [Helm](https://helm.sh/) 3.15+ | — | required |
+| `aws` CLI | — | one-time bucket bootstrap |
+
+All credentials default to dev-only values (`admin` / `password` / `any`).
+Override anything that matters via `.env` (Compose) or a Kubernetes Secret.
+
+### Path A — Docker Compose (fast local loop)
+
+```bash
+docker compose up -d                            # 14 services, ~60s to settle
+docker compose ps                               # all should be healthy or "Up"
+```
+
+State persists to gitignored bind mounts under the repo root:
+`./.seaweedfs/`, `./.redis/`, `./.postgres/`, `./.falkordb/`, `./.tempo/`,
+`./.loki/`. Prometheus + Grafana use named Docker volumes.
+
+Try it:
+
+```bash
+# Chat completion (no real provider needed — uses mock_response when keys are blank)
+curl -sS http://localhost:4000/v1/chat/completions \
+  -H "Authorization: Bearer sk-dev-master-key-change-me-not-a-secret" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}]}'
+
+# Grafana (admin / admin)
+open http://localhost:3001
+
+# LiteLLM admin UI (admin / password)
+open http://localhost:4000/ui
+
+# MLflow
+open http://localhost:5000
+```
+
+Tear down:
+
+```bash
+docker compose down                                              # keep data
+docker compose down -v && rm -rf .seaweedfs .redis .postgres \
+  .falkordb .tempo .loki                                         # full wipe
+```
+
+To use real Anthropic / OpenAI models, set the keys in `.env` (the file is
+gitignored; `.env.example` documents what's available):
+
+```bash
+cp .env.example .env
+# edit .env: set ANTHROPIC_API_KEY / OPENAI_API_KEY
+docker compose up -d --force-recreate litellm
+```
+
+### Path B — Kubernetes (kind + Helm)
+
+This path runs the same services inside a local kind cluster — useful for
+practicing the Helm install flow and the cross-chart wiring without
+provisioning a real cluster.
+
+```bash
+# 1. Cluster + namespace
+kind create cluster --config deploy/kind/kind-config.yaml --name agentic-platform
+kubectl create namespace agentic-platform
+
+# 2. Shared infrastructure
+helm dependency update deploy/helm/seaweedfs
+helm install platform-seaweedfs deploy/helm/seaweedfs -n agentic-platform --wait --timeout 5m
+helm install platform-redis     deploy/helm/redis     -n agentic-platform --wait --timeout 5m
+helm install platform-postgres  deploy/helm/postgres  -n agentic-platform --wait --timeout 5m
+helm install platform-falkordb  deploy/helm/falkordb  -n agentic-platform --wait --timeout 5m
+
+# 3. One-time bootstrap (S3 buckets + litellm DB)
+kubectl -n agentic-platform port-forward svc/platform-seaweedfs-all-in-one 8333:8333 &
+PF=$!
+AWS_ACCESS_KEY_ID=any AWS_SECRET_ACCESS_KEY=any aws --endpoint-url http://localhost:8333 \
+  s3 mb s3://tempo-traces s3://loki-logs s3://mlflow-artifacts s3://prometheus-blocks
+kill $PF
+kubectl -n agentic-platform exec deploy/platform-postgres -- \
+  psql -U postgres -c "CREATE DATABASE litellm"
+
+# 4. Telemetry + tracking
+for c in otel-collector tempo loki prometheus grafana mlflow; do
+  helm dependency update deploy/helm/$c
+done
+helm install platform-tempo          deploy/helm/tempo          -n agentic-platform --wait --timeout 5m
+helm install platform-loki           deploy/helm/loki           -n agentic-platform --wait --timeout 8m
+helm install platform-prometheus     deploy/helm/prometheus     -n agentic-platform --wait --timeout 5m
+helm install platform-grafana        deploy/helm/grafana        -n agentic-platform --wait --timeout 5m
+helm install platform-otel-collector deploy/helm/otel-collector -n agentic-platform --wait --timeout 5m
+helm install platform-mlflow         deploy/helm/mlflow         -n agentic-platform --wait --timeout 8m
+
+# 5. Data plane (presidio first, then litellm + mcp gateway)
+helm install platform-presidio    deploy/helm/presidio    -n agentic-platform --wait --timeout 5m
+helm install platform-mcp-gateway deploy/helm/mcp-gateway -n agentic-platform --wait --timeout 5m
+
+# 6. LiteLLM needs a Secret BEFORE install
+kubectl -n agentic-platform create secret generic platform-litellm-secrets \
+  --from-literal=masterkey="$(openssl rand -hex 32)" \
+  --from-literal=anthropic-api-key="${ANTHROPIC_API_KEY:-}" \
+  --from-literal=openai-api-key="${OPENAI_API_KEY:-}"
+helm dependency update deploy/helm/litellm
+helm install platform-litellm deploy/helm/litellm -n agentic-platform --wait --timeout 10m
+
+kubectl -n agentic-platform get pods,svc,pvc
+```
+
+Try it (run each port-forward in its own terminal):
+
+```bash
+kubectl -n agentic-platform port-forward svc/platform-litellm 4000:4000
+kubectl -n agentic-platform port-forward svc/platform-grafana 3000:80
+kubectl -n agentic-platform port-forward svc/platform-mlflow  5000:5000
+```
+
+Tear down:
+
+```bash
+helm uninstall -n agentic-platform $(helm list -n agentic-platform -q)
+kind delete cluster --name agentic-platform
+```
 
 ## Services
 
@@ -157,131 +298,29 @@ flowchart TB
 > `values.yaml`. When you change one, mirror the change in the other. There
 > is no auto-sync.
 
-## Required environment variables
+## Environment variables
 
-Copy [.env.example](.env.example) to `.env` and fill in:
+All credentials default to dev-only values in `docker-compose.yaml` via
+`${VAR:-default}` substitution, so the Compose stack runs without a
+`.env` file. Override anything that matters by creating `.env` (gitignored;
+see [.env.example](.env.example) for the full list with comments).
 
-| Var | Where used | Notes |
-| --- | --- | --- |
-| `LITELLM_MASTER_KEY` | Compose | API key clients send to LiteLLM. `>=32` chars. |
-| `LITELLM_UI_USERNAME` / `LITELLM_UI_PASSWORD` | Compose | Admin UI login at `:4000/ui` |
-| `GRAFANA_ADMIN_PASSWORD` | Compose | Admin login for Grafana at `:3001` |
-| `ANTHROPIC_API_KEY` | Compose + Helm | Upstream provider key (optional) |
-| `OPENAI_API_KEY` | Compose + Helm | Upstream provider key (optional) |
+| Var | Default | Where used | Notes |
+| --- | --- | --- | --- |
+| `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` | `postgres` / `password` / `mlflow` | Compose | Shared Postgres for LiteLLM + MLflow |
+| `S3_ACCESS_KEY` / `S3_SECRET_KEY` | `any` / `any` | Compose | Must match the identities in [config/seaweedfs/s3-identities.json](config/seaweedfs/s3-identities.json) |
+| `LITELLM_MASTER_KEY` | `sk-dev-master-key-change-me-not-a-secret` | Compose | Bearer token clients send to LiteLLM |
+| `LITELLM_UI_USERNAME` / `LITELLM_UI_PASSWORD` | `admin` / `password` | Compose | Admin UI login at `:4000/ui` |
+| `GRAFANA_ADMIN_PASSWORD` | `admin` | Compose | Grafana admin password at `:3001` |
+| `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` | empty | Compose | Upstream provider keys; leave blank to use `mock_response` |
 
-For Helm, store these in a Kubernetes Secret instead — see
+For Helm, credentials go into a Kubernetes Secret instead of `.env` — see
 [deploy/helm/litellm/README.md](deploy/helm/litellm/README.md) and
 [deploy/helm/grafana/values.yaml](deploy/helm/grafana/values.yaml).
 
-## Local dev with Docker Compose
+## Chart-level READMEs
 
-The compose services persist state to gitignored bind mounts under the repo
-root: `./.seaweedfs/`, `./.redis/`, `./.postgres/`, `./.falkordb/`,
-`./.tempo/`, `./.loki/`. Prometheus + Grafana use named volumes.
-
-```bash
-cp .env.example .env                       # then edit secrets
-docker compose up -d                       # start everything
-docker compose ps                          # check health
-docker compose logs -f litellm             # tail one service
-docker compose down                        # stop, keep data
-docker compose down -v && rm -rf .seaweedfs .redis .postgres .falkordb .tempo .loki  # full wipe
-```
-
-Startup order is enforced by `depends_on` + healthchecks:
-
-1. `seaweedfs`, `redis`, `postgres`, `falkordb` come up.
-2. `seaweedfs-init` creates the S3 buckets, `postgres-init` creates the
-   `litellm` database. Both are one-shot.
-3. `tempo`, `loki`, `prometheus`, `mlflow` start once their buckets exist.
-4. `otel-collector` starts after the backends.
-5. `litellm` starts last (depends on postgres-init, redis, presidio, otel).
-
-Quick connectivity checks:
-
-```bash
-curl -sS http://localhost:8333/                       # SeaweedFS S3
-redis-cli -h 127.0.0.1 -p 6379 ping                   # Redis
-psql "postgres://postgres:password@127.0.0.1:5432/mlflow" -c "SELECT 1"
-curl -sS http://localhost:4000/health/readiness       # LiteLLM
-curl -sS http://localhost:5000/health                 # MLflow
-curl -sS http://localhost:3100/ready                  # Loki
-curl -sS http://localhost:3200/ready                  # Tempo
-curl -sS http://localhost:9090/-/ready                # Prometheus
-curl -sS http://localhost:3001/api/health             # Grafana
-```
-
-LiteLLM smoke test (after setting `LITELLM_MASTER_KEY` + `ANTHROPIC_API_KEY`):
-
-```bash
-curl -sS http://localhost:4000/v1/chat/completions \
-  -H "Authorization: Bearer $LITELLM_MASTER_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"model":"claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}]}'
-```
-
-## Local k8s dev with kind + Helm
-
-Prerequisites: [kind](https://kind.sigs.k8s.io/), `kubectl`,
-[Helm](https://helm.sh/) 3.15+, and the [`aws` CLI](https://aws.amazon.com/cli/)
-(for the one-time bucket creation).
-
-```bash
-# 1. Cluster + namespace
-kind create cluster --config deploy/kind/kind-config.yaml --name agentic-platform
-kubectl create namespace agentic-platform
-
-# 2. Shared infra
-helm dependency update deploy/helm/seaweedfs
-helm install platform-seaweedfs deploy/helm/seaweedfs -n agentic-platform --wait --timeout 5m
-helm install platform-redis     deploy/helm/redis     -n agentic-platform --wait --timeout 5m
-helm install platform-postgres  deploy/helm/postgres  -n agentic-platform --wait --timeout 5m
-helm install platform-falkordb  deploy/helm/falkordb  -n agentic-platform --wait --timeout 5m
-
-# 3. One-time bootstrap (buckets + litellm DB)
-kubectl -n agentic-platform port-forward svc/platform-seaweedfs-all-in-one 8333:8333 &
-PF=$!
-AWS_ACCESS_KEY_ID=any AWS_SECRET_ACCESS_KEY=any aws --endpoint-url http://localhost:8333 \
-  s3 mb s3://tempo-traces s3://loki-logs s3://mlflow-artifacts s3://prometheus-blocks
-kill $PF
-
-kubectl -n agentic-platform exec deploy/platform-postgres -- \
-  psql -U postgres -c "CREATE DATABASE litellm"
-
-# 4. Telemetry + tracking
-helm dependency update deploy/helm/otel-collector deploy/helm/tempo deploy/helm/loki deploy/helm/prometheus deploy/helm/grafana deploy/helm/mlflow
-helm install platform-tempo          deploy/helm/tempo          -n agentic-platform --wait --timeout 5m
-helm install platform-loki           deploy/helm/loki           -n agentic-platform --wait --timeout 5m
-helm install platform-prometheus     deploy/helm/prometheus     -n agentic-platform --wait --timeout 5m
-helm install platform-grafana        deploy/helm/grafana        -n agentic-platform --wait --timeout 5m
-helm install platform-otel-collector deploy/helm/otel-collector -n agentic-platform --wait --timeout 5m
-helm install platform-mlflow         deploy/helm/mlflow         -n agentic-platform --wait --timeout 5m
-
-# 5. Data plane (presidio first, then litellm + mcp gateway)
-helm install platform-presidio    deploy/helm/presidio    -n agentic-platform --wait --timeout 5m
-helm install platform-mcp-gateway deploy/helm/mcp-gateway -n agentic-platform --wait --timeout 5m
-
-# 6. LiteLLM needs a secret BEFORE install (master key + provider keys)
-kubectl -n agentic-platform create secret generic platform-litellm-secrets \
-  --from-literal=masterkey="$(openssl rand -hex 32)" \
-  --from-literal=anthropic-api-key="$ANTHROPIC_API_KEY" \
-  --from-literal=openai-api-key="$OPENAI_API_KEY"
-helm dependency update deploy/helm/litellm
-helm install platform-litellm deploy/helm/litellm -n agentic-platform --wait --timeout 5m
-
-kubectl -n agentic-platform get pods,svc,pvc
-
-# 7. Port-forwards (one per service, separate terminals)
-kubectl -n agentic-platform port-forward svc/platform-litellm 4000:4000
-kubectl -n agentic-platform port-forward svc/platform-grafana 3000:80
-kubectl -n agentic-platform port-forward svc/platform-mlflow  5000:5000
-
-# Tear down
-helm uninstall -n agentic-platform $(helm list -n agentic-platform -q)
-kind delete cluster --name agentic-platform
-```
-
-Chart-level READMEs cover per-service options:
+Each Helm chart has its own README with prerequisites and per-service options:
 
 **Infra**
 - [SeaweedFS](deploy/helm/seaweedfs/README.md)

@@ -9,9 +9,12 @@
 set -eu
 
 ENDPOINT="${S3_ENDPOINT:-http://seaweedfs:8333}"
-export AWS_ACCESS_KEY_ID=any
-export AWS_SECRET_ACCESS_KEY=any
-export AWS_DEFAULT_REGION=us-east-1
+# Honour AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY from compose env (which
+# pulls from S3_ACCESS_KEY / S3_SECRET_KEY in .env). Fall back to `any`
+# when nothing is set, matching the default identities config.
+export AWS_ACCESS_KEY_ID="${AWS_ACCESS_KEY_ID:-any}"
+export AWS_SECRET_ACCESS_KEY="${AWS_SECRET_ACCESS_KEY:-any}"
+export AWS_DEFAULT_REGION="${AWS_DEFAULT_REGION:-us-east-1}"
 
 # Wait for SeaweedFS to respond before issuing mb commands.
 i=0
