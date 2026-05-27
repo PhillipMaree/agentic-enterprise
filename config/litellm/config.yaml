@@ -1,0 +1,56 @@
+# LiteLLM proxy — OpenAI-compatible gateway in front of upstream LLM
+# providers. Centralises API keys, rate limits, cost tracking, PII masking,
+# and observability so app code only talks to one endpoint.
+#
+# Pre-call PII masking via Presidio:
+#   Every prompt is sent to presidio-analyzer + presidio-anonymizer BEFORE
+#   the upstream provider sees it. PII categories (names, emails, phone
+#   numbers, SSNs, etc.) are replaced with placeholders. Disable by
+#   removing `presidio_pii_masking` from `callbacks`.
+#
+# Caching:
+#   Response cache uses Redis DB 1 (separate from any other Redis usage).
+#   TTL is per-request (LiteLLM defaults). Disable by removing `cache: true`.
+
+model_list:
+  # Add or remove model aliases here. The `model_name` is the alias the
+  # client uses; `litellm_params.model` is the provider-prefixed real model.
+  - model_name: claude-sonnet-4-6
+    litellm_params:
+      model: anthropic/claude-sonnet-4-6
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+  - model_name: claude-opus-4-7
+    litellm_params:
+      model: anthropic/claude-opus-4-7
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+  - model_name: claude-haiku-4-5
+    litellm_params:
+      model: anthropic/claude-haiku-4-5-20251001
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+  - model_name: gpt-4o
+    litellm_params:
+      model: openai/gpt-4o
+      api_key: os.environ/OPENAI_API_KEY
+
+litellm_settings:
+  # Order matters: PII masking must run before the request hits the provider.
+  callbacks: ["presidio_pii_masking"]
+  set_verbose: false
+
+  # Redis-backed response cache. Same Redis instance the rest of the
+  # platform uses; DB 1 keeps keys isolated.
+  cache: true
+  cache_params:
+    type: redis
+    host: redis
+    port: 6379
+    db: 1
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+  database_url: os.environ/DATABASE_URL
+  # Cost + usage tracking written to Postgres. Disable if you don't need it.
+  store_model_in_db: true

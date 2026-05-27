@@ -1,0 +1,62 @@
+# Grafana Loki — log aggregation, single-binary mode.
+#
+# Storage: S3 (SeaweedFS) bucket `loki-logs` for chunks AND the TSDB index.
+# Bucket created by `seaweedfs-init` before Loki starts.
+#
+# `auth_enabled: false` — single-tenant mode (tenant defaults to `fake`).
+# Turn this on plus a tenant header proxy for any shared environment.
+
+auth_enabled: false
+
+server:
+  http_listen_port: 3100
+  grpc_listen_port: 9096
+
+common:
+  # In-memory ring + replication_factor 1 = no clustering, single replica.
+  # Switch to a real KV store (consul/etcd) and bump RF for HA.
+  ring:
+    kvstore:
+      store: inmemory
+    instance_addr: 127.0.0.1
+  replication_factor: 1
+  path_prefix: /var/loki
+
+# Schema v13 + TSDB is the current Loki recommendation. Older deployments
+# may have boltdb-shipper; do not mix.
+schema_config:
+  configs:
+    - from: 2024-01-01
+      store: tsdb
+      object_store: s3
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+
+storage_config:
+  aws:
+    # Same SeaweedFS endpoint as tempo. `any:any` because S3 auth is off.
+    s3: http://any:any@seaweedfs.:8333/loki-logs
+    s3forcepathstyle: true
+    insecure: true
+  tsdb_shipper:
+    active_index_directory: /var/loki/tsdb-index
+    cache_location: /var/loki/tsdb-cache
+    cache_ttl: 24h
+
+compactor:
+  working_directory: /var/loki/compactor
+  # Required by Loki >=3.0 to enable retention deletion.
+  delete_request_store: s3
+  retention_enabled: true
+  retention_delete_delay: 2h
+  retention_delete_worker_count: 150
+
+limits_config:
+  # 72h retention. Older logs are deleted by the compactor.
+  retention_period: 72h
+  # Loki refuses logs older than this by default — relax for replay/debug.
+  reject_old_samples: true
+  reject_old_samples_max_age: 168h
+  allow_structured_metadata: true

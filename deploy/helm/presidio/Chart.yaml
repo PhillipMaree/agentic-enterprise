@@ -1,0 +1,6 @@
+apiVersion: v2
+name: platform-presidio
+description: Microsoft Presidio (analyzer + anonymizer) for the agentic-platform namespace (dev/kind deploy).
+type: application
+version: 0.1.0
+appVersion: "latest"

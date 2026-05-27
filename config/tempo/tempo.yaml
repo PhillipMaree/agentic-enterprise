@@ -1,0 +1,54 @@
+# Grafana Tempo — distributed tracing backend, single-binary mode.
+#
+# Storage: S3 (SeaweedFS) bucket `tempo-traces`. Bucket is created by the
+# `seaweedfs-init` service before Tempo starts.
+#
+# Retention: 24h. Increase `compactor.compaction.block_retention` for longer
+# retention windows (storage cost scales linearly).
+
+server:
+  http_listen_port: 3200
+  grpc_listen_port: 9095
+
+# Tempo accepts traces on its own OTLP ports too, but in this stack the
+# OpenTelemetry Collector is the only writer. The distributor block is
+# still required.
+distributor:
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: 0.0.0.0:4317
+        http:
+          endpoint: 0.0.0.0:4318
+
+ingester:
+  # Flush blocks frequently in dev so traces show up quickly. In prod you
+  # want larger blocks (less S3 churn) at the cost of longer query lag.
+  trace_idle_period: 10s
+  max_block_bytes: 1_000_000
+  max_block_duration: 5m
+
+compactor:
+  compaction:
+    # Anything older than this is deleted from S3.
+    block_retention: 24h
+
+storage:
+  trace:
+    backend: s3
+    s3:
+      bucket: tempo-traces
+      endpoint: seaweedfs:8333
+      # SeaweedFS S3 auth is disabled in this stack (dev only). Any
+      # non-empty credentials are accepted.
+      access_key: any
+      secret_key: any
+      insecure: true
+      forcepathstyle: true
+    pool:
+      max_workers: 100
+      queue_depth: 10000
+    wal:
+      # Local on-disk WAL — flushed to S3 by the ingester.
+      path: /var/tempo/wal

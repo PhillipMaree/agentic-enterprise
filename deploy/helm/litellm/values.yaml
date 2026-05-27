@@ -1,0 +1,108 @@
+# Overrides for berriai/litellm-helm (pulled from OCI ghcr.io/berriai).
+# Mirrors config/litellm/config.yaml plus the env-vars block in
+# docker-compose.yaml.
+#
+# IMPORTANT: this chart expects you to create a Secret named
+# `platform-litellm-secrets` BEFORE install with keys:
+#   - masterkey
+#   - anthropic-api-key (optional)
+#   - openai-api-key    (optional)
+#
+# kubectl -n agentic-platform create secret generic platform-litellm-secrets \
+#   --from-literal=masterkey="$(openssl rand -hex 32)" \
+#   --from-literal=anthropic-api-key="$ANTHROPIC_API_KEY" \
+#   --from-literal=openai-api-key="$OPENAI_API_KEY"
+
+litellm-helm:
+  replicaCount: 1
+
+  image:
+    repository: ghcr.io/berriai/litellm
+    tag: main-stable
+    pullPolicy: IfNotPresent
+
+  service:
+    type: ClusterIP
+    port: 4000
+
+  # Postgres for usage tracking. Uses existing platform-postgres.
+  db:
+    deployStandalone: false
+    useExisting: true
+    endpoint: platform-postgres:5432
+    database: litellm
+    username: postgres
+    # In real envs use a separate secret. Plain dev default here.
+    passwordSecret: platform-postgres
+    passwordSecretKey: postgres-password
+
+  # Redis for response cache. Uses existing platform-redis on DB 1.
+  redis:
+    enabled: true
+    host: platform-redis
+    port: 6379
+    db: 1
+
+  proxy_config:
+    model_list:
+      - model_name: claude-sonnet-4-6
+        litellm_params:
+          model: anthropic/claude-sonnet-4-6
+          api_key: os.environ/ANTHROPIC_API_KEY
+      - model_name: claude-opus-4-7
+        litellm_params:
+          model: anthropic/claude-opus-4-7
+          api_key: os.environ/ANTHROPIC_API_KEY
+      - model_name: claude-haiku-4-5
+        litellm_params:
+          model: anthropic/claude-haiku-4-5-20251001
+          api_key: os.environ/ANTHROPIC_API_KEY
+      - model_name: gpt-4o
+        litellm_params:
+          model: openai/gpt-4o
+          api_key: os.environ/OPENAI_API_KEY
+
+    litellm_settings:
+      callbacks: ["presidio_pii_masking"]
+      cache: true
+      cache_params:
+        type: redis
+        host: platform-redis
+        port: 6379
+        db: 1
+
+    general_settings:
+      store_model_in_db: true
+
+  masterkeySecretName: platform-litellm-secrets
+  masterkeySecretKey: masterkey
+
+  extraEnvVars:
+    - name: PRESIDIO_ANALYZER_API_BASE
+      value: http://platform-presidio-analyzer:3000
+    - name: PRESIDIO_ANONYMIZER_API_BASE
+      value: http://platform-presidio-anonymizer:3000
+    - name: OTEL_EXPORTER_OTLP_ENDPOINT
+      value: http://platform-otel-collector:4317
+    - name: OTEL_SERVICE_NAME
+      value: litellm
+    - name: ANTHROPIC_API_KEY
+      valueFrom:
+        secretKeyRef:
+          name: platform-litellm-secrets
+          key: anthropic-api-key
+          optional: true
+    - name: OPENAI_API_KEY
+      valueFrom:
+        secretKeyRef:
+          name: platform-litellm-secrets
+          key: openai-api-key
+          optional: true
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi

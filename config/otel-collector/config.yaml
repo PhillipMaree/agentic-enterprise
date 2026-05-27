@@ -1,0 +1,77 @@
+# OpenTelemetry Collector — central telemetry fan-out for agentic-platform.
+#
+# Why a collector at all:
+#   Apps emit OTLP once. The collector handles routing per signal type to the
+#   appropriate backend (traces→tempo, metrics→prometheus, logs→loki). Apps
+#   don't need backend-specific SDKs and we can swap backends without touching
+#   application code.
+#
+# Pipelines (one per signal):
+#   traces:  OTLP in → batch → Tempo  (via OTLP gRPC)
+#   metrics: OTLP in → batch → Prometheus  (via remote-write)
+#   logs:    OTLP in → batch → Loki  (via HTTP push)
+
+receivers:
+  # OTLP is the only ingress. Both gRPC (4317) and HTTP (4318) are exposed
+  # so SDKs in any language can push.
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  # memory_limiter MUST come first in every pipeline — it drops data under
+  # pressure to keep the collector itself alive (otherwise it OOMs and you
+  # lose everything in flight).
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 512
+    spike_limit_mib: 128
+
+  # Batching dramatically reduces backend write amplification. Tune
+  # timeout/size if you're seeing visible latency in Grafana.
+  batch:
+    timeout: 10s
+    send_batch_size: 1024
+
+exporters:
+  # Traces → Tempo. Use OTLP gRPC; Tempo speaks OTLP natively on 4317.
+  # `insecure: true` because we're inside the compose network — no TLS.
+  otlp/tempo:
+    endpoint: tempo:4317
+    tls:
+      insecure: true
+
+  # Metrics → Prometheus via remote-write. Requires
+  # `--web.enable-remote-write-receiver` on the Prometheus side (set in
+  # docker-compose.yaml).
+  prometheusremotewrite:
+    endpoint: http://prometheus:9090/api/v1/write
+    tls:
+      insecure: true
+
+  # Logs → Loki HTTP push API.
+  loki:
+    endpoint: http://loki:3100/loki/api/v1/push
+
+service:
+  # The collector itself emits metrics on :8888 — Prometheus scrapes this.
+  telemetry:
+    metrics:
+      address: 0.0.0.0:8888
+
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlp/tempo]
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [prometheusremotewrite]
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [loki]

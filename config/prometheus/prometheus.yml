@@ -1,0 +1,39 @@
+# Prometheus — metrics storage + scraper.
+#
+# Two ingest paths:
+#   1. Pull (scrape):     prometheus polls /metrics endpoints listed below.
+#   2. Push (remote-write): the OTel Collector remote-writes here.
+#                          Enabled via --web.enable-remote-write-receiver
+#                          in docker-compose.yaml command flags.
+#
+# Storage: local TSDB at /prometheus. For long-term, S3-backed storage you'd
+# add Thanos sidecar or Grafana Mimir — out of scope for this dev stack.
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  # Prometheus' own metrics.
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # OTel Collector internal telemetry. The collector emits its own metrics
+  # on :8888 (configured in config/otel-collector/config.yaml).
+  - job_name: otel-collector
+    static_configs:
+      - targets: ["otel-collector:8888"]
+
+  # LiteLLM exposes Prometheus metrics on its main HTTP port.
+  - job_name: litellm
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["litellm:4000"]
+
+  # MLflow exposes /metrics when run with prometheus_flask_exporter enabled.
+  # Safe to leave — Prometheus just marks the target down if absent.
+  - job_name: mlflow
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["mlflow:5000"]

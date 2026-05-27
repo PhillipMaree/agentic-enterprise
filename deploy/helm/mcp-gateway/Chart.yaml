@@ -1,0 +1,6 @@
+apiVersion: v2
+name: platform-mcp-gateway
+description: Docker MCP Gateway for the agentic-platform namespace (dev/kind deploy).
+type: application
+version: 0.1.0
+appVersion: "latest"

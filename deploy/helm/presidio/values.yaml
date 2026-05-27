@@ -1,0 +1,29 @@
+# Hand-written chart — no widely-maintained upstream Helm chart for the
+# Presidio analyzer/anonymizer pair. Both are stateless HTTP services
+# running on container port 3000.
+
+analyzer:
+  image:
+    repository: mcr.microsoft.com/presidio-analyzer
+    tag: latest
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+
+anonymizer:
+  image:
+    repository: mcr.microsoft.com/presidio-anonymizer
+    tag: latest
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi

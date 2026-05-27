@@ -1,0 +1,19 @@
+# Grafana dashboard provisioning sidecar — loads any JSON dashboards
+# dropped into /etc/grafana/provisioning/dashboards/ at startup.
+#
+# Empty by default. Drop dashboard JSON files alongside this provider
+# definition to have them auto-loaded.
+
+apiVersion: 1
+
+providers:
+  - name: default
+    orgId: 1
+    folder: ""
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/provisioning/dashboards
+      foldersFromFilesStructure: true

@@ -1,0 +1,80 @@
+# Overrides for grafana/loki (single-binary mode for dev/kind).
+# Mirrors config/loki/loki-config.yaml.
+#
+# Storage backend: SeaweedFS S3 (loki-logs bucket, must exist).
+
+loki:
+  deploymentMode: SingleBinary
+
+  loki:
+    auth_enabled: false
+    commonConfig:
+      replication_factor: 1
+    schemaConfig:
+      configs:
+        - from: "2024-01-01"
+          store: tsdb
+          object_store: s3
+          schema: v13
+          index:
+            prefix: index_
+            period: 24h
+    storage:
+      type: s3
+      bucketNames:
+        chunks: loki-logs
+        ruler: loki-logs
+        admin: loki-logs
+      s3:
+        endpoint: platform-seaweedfs-all-in-one:8333
+        accessKeyId: any
+        secretAccessKey: any
+        s3ForcePathStyle: true
+        insecure: true
+    limits_config:
+      retention_period: 72h
+      reject_old_samples: true
+      reject_old_samples_max_age: 168h
+      allow_structured_metadata: true
+    compactor:
+      working_directory: /var/loki/compactor
+      delete_request_store: s3
+      retention_enabled: true
+
+  singleBinary:
+    replicas: 1
+    persistence:
+      enabled: true
+      size: 1Gi
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        cpu: "1"
+        memory: 1Gi
+
+  # Disable cluster components we don't need in single-binary mode.
+  read:
+    replicas: 0
+  write:
+    replicas: 0
+  backend:
+    replicas: 0
+
+  # Caches are overkill for dev; disable to keep the pod count down.
+  chunksCache:
+    enabled: false
+  resultsCache:
+    enabled: false
+
+  test:
+    enabled: false
+  monitoring:
+    selfMonitoring:
+      enabled: false
+    lokiCanary:
+      enabled: false
+
+  gateway:
+    enabled: false

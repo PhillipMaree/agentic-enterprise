@@ -3,6 +3,11 @@
 .redis/
 .postgres/
 .falkordb/
+.tempo/
+.loki/
+
+# Secrets
+.env
 
 # Helm
 *.tgz
