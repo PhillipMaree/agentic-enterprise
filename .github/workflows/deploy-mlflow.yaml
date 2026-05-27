@@ -1,0 +1,125 @@
+name: deploy-mlflow
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "deploy/helm/mlflow/**"
+      - "deploy/kind/kind-config.yaml"
+      - ".github/workflows/deploy-mlflow.yaml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "deploy/helm/mlflow/**"
+      - "deploy/kind/kind-config.yaml"
+      - ".github/workflows/deploy-mlflow.yaml"
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: helm install on ephemeral kind
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+    env:
+      NAMESPACE: agentic-platform
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.15.4
+
+      - name: helm dependency update
+        run: |
+          helm dependency update deploy/helm/seaweedfs
+          helm dependency update deploy/helm/mlflow
+
+      - name: helm lint mlflow
+        run: helm lint deploy/helm/mlflow
+
+      - name: Create kind cluster
+        uses: helm/kind-action@v1
+        with:
+          config: deploy/kind/kind-config.yaml
+          cluster_name: agentic-platform
+
+      - name: Create namespace
+        run: kubectl create namespace "$NAMESPACE"
+
+      - name: Install dependencies (postgres + seaweedfs)
+        run: |
+          helm install platform-postgres  deploy/helm/postgres  -n "$NAMESPACE" --wait --timeout 5m
+          helm install platform-seaweedfs deploy/helm/seaweedfs -n "$NAMESPACE" --wait --timeout 5m
+
+      - name: Bootstrap mlflow-artifacts bucket
+        run: |
+          set -euo pipefail
+          kubectl -n "$NAMESPACE" port-forward svc/platform-seaweedfs-all-in-one 8333:8333 >/tmp/pf-s3.log 2>&1 &
+          PF=$!
+          trap 'kill $PF 2>/dev/null || true' EXIT
+          for i in $(seq 1 30); do
+            curl -fsS http://localhost:8333/ >/dev/null 2>&1 && break
+            sleep 1
+          done
+          pip install --quiet awscli
+          AWS_ACCESS_KEY_ID=any AWS_SECRET_ACCESS_KEY=any AWS_DEFAULT_REGION=us-east-1 \
+            aws --endpoint-url http://localhost:8333 s3 mb s3://mlflow-artifacts
+
+      - name: Install platform-mlflow
+        run: |
+          helm install platform-mlflow deploy/helm/mlflow \
+            --namespace "$NAMESPACE" \
+            --wait --timeout 8m
+          kubectl -n "$NAMESPACE" get pods,svc
+
+      - name: Integration test — create experiment + log run via REST API
+        run: |
+          set -euo pipefail
+          kubectl -n "$NAMESPACE" port-forward svc/platform-mlflow 5000:5000 >/tmp/pf-m.log 2>&1 &
+          PF=$!
+          trap 'kill $PF 2>/dev/null || true' EXIT
+          for i in $(seq 1 60); do
+            curl -fsS http://localhost:5000/health >/dev/null 2>&1 && break
+            sleep 1
+          done
+
+          # Create an experiment.
+          EXP_RESP="$(curl -fsS -X POST http://localhost:5000/api/2.0/mlflow/experiments/create \
+            -H 'Content-Type: application/json' \
+            -d '{"name":"ci-probe"}')"
+          echo "$EXP_RESP"
+          EXP_ID="$(echo "$EXP_RESP" | grep -oE '"experiment_id":"[0-9]+"' | grep -oE '[0-9]+')"
+          [ -n "$EXP_ID" ] || { echo "no experiment_id returned"; exit 1; }
+
+          # Create a run + log a metric.
+          RUN_RESP="$(curl -fsS -X POST http://localhost:5000/api/2.0/mlflow/runs/create \
+            -H 'Content-Type: application/json' \
+            -d "{\"experiment_id\":\"${EXP_ID}\",\"start_time\":$(date +%s000)}")"
+          echo "$RUN_RESP"
+          RUN_ID="$(echo "$RUN_RESP" | grep -oE '"run_id":"[a-f0-9]+"' | grep -oE '[a-f0-9]{32}')"
+          [ -n "$RUN_ID" ] || { echo "no run_id returned"; exit 1; }
+
+          curl -fsS -X POST http://localhost:5000/api/2.0/mlflow/runs/log-metric \
+            -H 'Content-Type: application/json' \
+            -d "{\"run_id\":\"${RUN_ID}\",\"key\":\"ci_score\",\"value\":0.99,\"timestamp\":$(date +%s000),\"step\":0}"
+
+          # Verify by reading the run back.
+          curl -fsS "http://localhost:5000/api/2.0/mlflow/runs/get?run_id=${RUN_ID}" | tee /tmp/run.json
+          grep -q 'ci_score' /tmp/run.json
+          grep -q '0.99'     /tmp/run.json
+
+      - name: Dump diagnostics on failure
+        if: failure()
+        run: |
+          kubectl -n "$NAMESPACE" get all
+          kubectl -n "$NAMESPACE" describe pods
+          for c in mlflow postgres seaweedfs; do
+            echo "=== $c ==="
+            kubectl -n "$NAMESPACE" logs -l app.kubernetes.io/instance=platform-$c --all-containers --tail=200 || true
+          done

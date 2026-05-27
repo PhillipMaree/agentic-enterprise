@@ -1,0 +1,90 @@
+name: deploy-mcp-gateway
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "deploy/helm/mcp-gateway/**"
+      - "deploy/kind/kind-config.yaml"
+      - ".github/workflows/deploy-mcp-gateway.yaml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "deploy/helm/mcp-gateway/**"
+      - "deploy/kind/kind-config.yaml"
+      - ".github/workflows/deploy-mcp-gateway.yaml"
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: helm install on ephemeral kind
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+    env:
+      NAMESPACE: agentic-platform
+      RELEASE: platform-mcp-gateway
+      CHART_DIR: deploy/helm/mcp-gateway
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.15.4
+
+      - name: helm lint
+        run: helm lint "$CHART_DIR"
+
+      - name: helm template (render only)
+        run: helm template "$RELEASE" "$CHART_DIR" --namespace "$NAMESPACE"
+
+      - name: Create kind cluster
+        uses: helm/kind-action@v1
+        with:
+          config: deploy/kind/kind-config.yaml
+          cluster_name: agentic-platform
+
+      - name: Create namespace
+        run: kubectl create namespace "$NAMESPACE"
+
+      - name: helm install
+        run: |
+          helm install "$RELEASE" "$CHART_DIR" \
+            --namespace "$NAMESPACE" \
+            --wait --timeout 5m
+
+      - name: Wait for workloads
+        run: |
+          kubectl -n "$NAMESPACE" wait \
+            --for=condition=Available deployment --all \
+            --timeout=300s
+          kubectl -n "$NAMESPACE" get pods,svc
+
+      - name: Smoke test MCP Gateway health
+        run: |
+          set -euo pipefail
+          kubectl -n "$NAMESPACE" port-forward svc/${RELEASE} 8811:8811 >/tmp/pf.log 2>&1 &
+          PF=$!
+          trap 'kill $PF 2>/dev/null || true' EXIT
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:8811/health >/dev/null 2>&1; then
+              echo "mcp-gateway healthy"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "mcp-gateway never reported healthy"
+          cat /tmp/pf.log || true
+          exit 1
+
+      - name: Dump diagnostics on failure
+        if: failure()
+        run: |
+          kubectl -n "$NAMESPACE" get all
+          kubectl -n "$NAMESPACE" describe pods
+          kubectl -n "$NAMESPACE" logs -l app.kubernetes.io/instance="$RELEASE" --all-containers --tail=200 || true

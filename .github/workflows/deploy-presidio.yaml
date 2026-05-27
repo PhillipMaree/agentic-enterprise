@@ -1,0 +1,108 @@
+name: deploy-presidio
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "deploy/helm/presidio/**"
+      - "deploy/kind/kind-config.yaml"
+      - ".github/workflows/deploy-presidio.yaml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "deploy/helm/presidio/**"
+      - "deploy/kind/kind-config.yaml"
+      - ".github/workflows/deploy-presidio.yaml"
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: helm install on ephemeral kind
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+    env:
+      NAMESPACE: agentic-platform
+      RELEASE: platform-presidio
+      CHART_DIR: deploy/helm/presidio
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.15.4
+
+      - name: helm lint
+        run: helm lint "$CHART_DIR"
+
+      - name: helm template (render only)
+        run: helm template "$RELEASE" "$CHART_DIR" --namespace "$NAMESPACE"
+
+      - name: Create kind cluster
+        uses: helm/kind-action@v1
+        with:
+          config: deploy/kind/kind-config.yaml
+          cluster_name: agentic-platform
+
+      - name: Create namespace
+        run: kubectl create namespace "$NAMESPACE"
+
+      - name: helm install
+        run: |
+          helm install "$RELEASE" "$CHART_DIR" \
+            --namespace "$NAMESPACE" \
+            --wait --timeout 5m
+
+      - name: Wait for workloads
+        run: |
+          kubectl -n "$NAMESPACE" wait \
+            --for=condition=Available deployment --all \
+            --timeout=300s
+          kubectl -n "$NAMESPACE" get pods,svc
+
+      - name: Integration test — PII analyze + anonymize round trip
+        run: |
+          set -euo pipefail
+
+          # Port-forward both sidecars from inside the runner.
+          kubectl -n "$NAMESPACE" port-forward svc/${RELEASE}-analyzer   5001:3000 >/tmp/pf-a.log 2>&1 &
+          PF_A=$!
+          kubectl -n "$NAMESPACE" port-forward svc/${RELEASE}-anonymizer 5002:3000 >/tmp/pf-o.log 2>&1 &
+          PF_O=$!
+          trap 'kill $PF_A $PF_O 2>/dev/null || true' EXIT
+
+          # Give port-forwards a moment to attach.
+          for i in $(seq 1 30); do
+            curl -fsS http://localhost:5001/health >/dev/null 2>&1 && \
+            curl -fsS http://localhost:5002/health >/dev/null 2>&1 && break
+            sleep 1
+          done
+
+          # Analyzer: detect entities in a string containing PII.
+          curl -fsS -X POST http://localhost:5001/analyze \
+            -H 'Content-Type: application/json' \
+            -d '{"text":"My email is alice@example.com and phone is 555-123-4567","language":"en"}' \
+            | tee /tmp/analyze.json
+          grep -q EMAIL_ADDRESS /tmp/analyze.json
+          grep -q PHONE_NUMBER /tmp/analyze.json
+
+          # Anonymizer: redact those entities.
+          curl -fsS -X POST http://localhost:5002/anonymize \
+            -H 'Content-Type: application/json' \
+            -d "{\"text\":\"My email is alice@example.com and phone is 555-123-4567\",\"analyzer_results\":$(cat /tmp/analyze.json)}" \
+            | tee /tmp/anon.json
+          # The anonymized text should NOT contain the original email/phone.
+          ! grep -q 'alice@example.com' /tmp/anon.json
+          ! grep -q '555-123-4567'      /tmp/anon.json
+
+      - name: Dump diagnostics on failure
+        if: failure()
+        run: |
+          kubectl -n "$NAMESPACE" get all
+          kubectl -n "$NAMESPACE" describe pods
+          kubectl -n "$NAMESPACE" logs -l app.kubernetes.io/instance="$RELEASE" --all-containers --tail=200 || true

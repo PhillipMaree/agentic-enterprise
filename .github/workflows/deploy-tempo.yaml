@@ -1,0 +1,141 @@
+name: deploy-tempo
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "deploy/helm/tempo/**"
+      - "deploy/kind/kind-config.yaml"
+      - ".github/workflows/deploy-tempo.yaml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "deploy/helm/tempo/**"
+      - "deploy/kind/kind-config.yaml"
+      - ".github/workflows/deploy-tempo.yaml"
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: helm install on ephemeral kind
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+    env:
+      NAMESPACE: agentic-platform
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.15.4
+
+      - name: helm dependency update (seaweedfs + tempo)
+        run: |
+          helm dependency update deploy/helm/seaweedfs
+          helm dependency update deploy/helm/tempo
+
+      - name: helm lint
+        run: |
+          helm lint deploy/helm/seaweedfs
+          helm lint deploy/helm/tempo
+
+      - name: Create kind cluster
+        uses: helm/kind-action@v1
+        with:
+          config: deploy/kind/kind-config.yaml
+          cluster_name: agentic-platform
+
+      - name: Create namespace
+        run: kubectl create namespace "$NAMESPACE"
+
+      - name: Install platform-seaweedfs (dependency)
+        run: |
+          helm install platform-seaweedfs deploy/helm/seaweedfs \
+            --namespace "$NAMESPACE" \
+            --wait --timeout 5m
+
+      - name: Bootstrap tempo-traces bucket
+        run: |
+          set -euo pipefail
+          kubectl -n "$NAMESPACE" port-forward svc/platform-seaweedfs-all-in-one 8333:8333 >/tmp/pf-s3.log 2>&1 &
+          PF=$!
+          trap 'kill $PF 2>/dev/null || true' EXIT
+          for i in $(seq 1 30); do
+            curl -fsS http://localhost:8333/ >/dev/null 2>&1 && break
+            sleep 1
+          done
+          pip install --quiet awscli
+          AWS_ACCESS_KEY_ID=any AWS_SECRET_ACCESS_KEY=any AWS_DEFAULT_REGION=us-east-1 \
+            aws --endpoint-url http://localhost:8333 s3 mb s3://tempo-traces
+
+      - name: Install platform-tempo
+        run: |
+          helm install platform-tempo deploy/helm/tempo \
+            --namespace "$NAMESPACE" \
+            --wait --timeout 5m
+
+      - name: Wait for Tempo workloads
+        run: |
+          kubectl -n "$NAMESPACE" rollout status statefulset/platform-tempo --timeout=300s || \
+          kubectl -n "$NAMESPACE" rollout status deployment/platform-tempo --timeout=300s
+          kubectl -n "$NAMESPACE" get pods,svc
+
+      - name: Integration test — push an OTLP trace and query it back
+        run: |
+          set -euo pipefail
+          # Tempo exposes both OTLP (4317 gRPC, 4318 HTTP) and its query API (3200).
+          # Use OTLP HTTP (simpler — no protobuf tooling on the runner).
+          kubectl -n "$NAMESPACE" port-forward svc/platform-tempo 3200:3200 4318:4318 >/tmp/pf-t.log 2>&1 &
+          PF=$!
+          trap 'kill $PF 2>/dev/null || true' EXIT
+          for i in $(seq 1 60); do
+            curl -fsS http://localhost:3200/ready >/dev/null 2>&1 && break
+            sleep 1
+          done
+
+          TRACE_ID="0123456789abcdef0123456789abcdef"
+          SPAN_ID="0123456789abcdef"
+          curl -fsS -X POST http://localhost:4318/v1/traces \
+            -H 'Content-Type: application/json' \
+            -d "{
+              \"resourceSpans\":[{
+                \"resource\":{\"attributes\":[{\"key\":\"service.name\",\"value\":{\"stringValue\":\"ci-probe\"}}]},
+                \"scopeSpans\":[{
+                  \"spans\":[{
+                    \"traceId\":\"${TRACE_ID}\",
+                    \"spanId\":\"${SPAN_ID}\",
+                    \"name\":\"ci-test-span\",
+                    \"kind\":1,
+                    \"startTimeUnixNano\":\"$(date +%s)000000000\",
+                    \"endTimeUnixNano\":\"$(($(date +%s)+1))000000000\"
+                  }]
+                }]
+              }]
+            }"
+
+          # Tempo flushes blocks every ~10s (per our config). Poll for the trace.
+          for i in $(seq 1 30); do
+            CODE="$(curl -s -o /tmp/trace.json -w '%{http_code}' http://localhost:3200/api/traces/${TRACE_ID})"
+            if [ "$CODE" = "200" ] && grep -q "ci-test-span" /tmp/trace.json; then
+              echo "trace round-tripped through Tempo + S3"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "trace never appeared in Tempo"
+          cat /tmp/trace.json || true
+          exit 1
+
+      - name: Dump diagnostics on failure
+        if: failure()
+        run: |
+          kubectl -n "$NAMESPACE" get all
+          kubectl -n "$NAMESPACE" describe pods
+          kubectl -n "$NAMESPACE" logs -l app.kubernetes.io/instance=platform-tempo --all-containers --tail=200 || true
+          kubectl -n "$NAMESPACE" logs -l app.kubernetes.io/instance=platform-seaweedfs --all-containers --tail=200 || true
