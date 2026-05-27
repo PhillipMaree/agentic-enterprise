@@ -1,49 +1,50 @@
-# Overrides for community-charts/mlflow.
+# Overrides for community-charts/mlflow, installed directly via `--repo`.
 #
 # Backend store: Postgres (the existing platform-postgres release).
 # Artifact store: SeaweedFS S3 (mlflow-artifacts bucket).
 #
-# IMPORTANT: This chart does NOT create the Postgres database. Make sure the
-# `mlflow` database exists in platform-postgres (it does by default — that's
-# why POSTGRES_DB=mlflow in the postgres chart's secret).
+# Prereqs handled by deploy.sh:
+#   - platform-postgres installed (HARD_DEPS)
+#   - platform-seaweedfs installed (HARD_DEPS)
+#   - mlflow-artifacts bucket created (bootstrap_buckets pre-install hook)
+# The `mlflow` database in postgres is created by default (POSTGRES_DB).
 
-mlflow:
-  image:
-    repository: ghcr.io/mlflow/mlflow
-    tag: v2.18.0
+# Use the chart's default image (`burakince/mlflow`) instead of
+# `ghcr.io/mlflow/mlflow`. The official image is minimal and lacks
+# psycopg2 — the Postgres backend store crashes at DB-migration time.
 
-  service:
-    type: ClusterIP
-    port: 5000
+service:
+  type: ClusterIP
+  port: 5000
 
-  backendStore:
-    databaseMigration: true
-    postgres:
-      enabled: true
-      host: platform-postgres
-      port: 5432
-      database: mlflow
-      user: postgres
-      password: password
+backendStore:
+  databaseMigration: true
+  postgres:
+    enabled: true
+    host: platform-postgres
+    port: 5432
+    database: mlflow
+    user: postgres
+    password: password
 
-  artifactRoot:
-    s3:
-      enabled: true
-      bucket: mlflow-artifacts
-      awsAccessKeyId: any
-      awsSecretAccessKey: any
+artifactRoot:
+  s3:
+    enabled: true
+    bucket: mlflow-artifacts
+    awsAccessKeyId: any
+    awsSecretAccessKey: any
 
-  extraEnvVars:
-    MLFLOW_S3_ENDPOINT_URL: http://platform-seaweedfs-all-in-one:8333
-    MLFLOW_S3_IGNORE_TLS: "true"
-    AWS_DEFAULT_REGION: us-east-1
+extraEnvVars:
+  MLFLOW_S3_ENDPOINT_URL: http://platform-seaweedfs-all-in-one:8333
+  MLFLOW_S3_IGNORE_TLS: "true"
+  AWS_DEFAULT_REGION: us-east-1
 
-  serveArtifacts: true
+serveArtifacts: true
 
-  resources:
-    requests:
-      cpu: 100m
-      memory: 256Mi
-    limits:
-      cpu: "1"
-      memory: 1Gi
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: "1"
+    memory: 1Gi

@@ -6,20 +6,25 @@ on:
     paths:
       - "deploy/helm/postgres/**"
       - "deploy/kind/kind-config.yaml"
+      - "deploy.sh"
       - ".github/workflows/deploy-postgres.yaml"
   pull_request:
     branches: [main]
     paths:
       - "deploy/helm/postgres/**"
       - "deploy/kind/kind-config.yaml"
+      - "deploy.sh"
       - ".github/workflows/deploy-postgres.yaml"
 
 permissions:
   contents: read
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 jobs:
   deploy:
-    name: helm install on ephemeral kind
+    name: deploy.sh --up postgres on ephemeral kind
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -27,21 +32,12 @@ jobs:
     env:
       NAMESPACE: agentic-platform
       RELEASE: platform-postgres
-      CHART_DIR: deploy/helm/postgres
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - name: Set up Helm
-        uses: azure/setup-helm@v4
+      - uses: azure/setup-helm@v4
         with:
-          version: v3.15.4
-
-      - name: helm lint
-        run: helm lint "$CHART_DIR"
-
-      - name: helm template (render only)
-        run: helm template "$RELEASE" "$CHART_DIR" --namespace "$NAMESPACE"
+          version: v3.21.0
 
       - name: Create kind cluster
         uses: helm/kind-action@v1
@@ -49,32 +45,15 @@ jobs:
           config: deploy/kind/kind-config.yaml
           cluster_name: agentic-platform
 
-      - name: Create namespace
-        run: kubectl create namespace "$NAMESPACE"
+      - name: Install via deploy.sh
+        run: ./deploy.sh --up postgres
 
-      - name: helm install
-        run: |
-          helm install "$RELEASE" "$CHART_DIR" \
-            --namespace "$NAMESPACE" \
-            --wait --timeout 5m
-
-      - name: Wait for workloads
-        run: |
-          kubectl -n "$NAMESPACE" wait \
-            --for=condition=Available deployment --all \
-            --timeout=300s
-          kubectl -n "$NAMESPACE" get pods,svc,pvc
-
-      - name: Smoke test Postgres
+      - name: Smoke test pg_isready + SELECT 1
         run: |
           set -euo pipefail
-          POD="$(kubectl -n "$NAMESPACE" get pod \
-            -l app.kubernetes.io/instance="$RELEASE" \
-            -o jsonpath='{.items[0].metadata.name}')"
-          echo "Pod: $POD"
+          POD="$(kubectl -n "$NAMESPACE" get pod -l app.kubernetes.io/instance="$RELEASE" -o jsonpath='{.items[0].metadata.name}')"
           kubectl -n "$NAMESPACE" exec "$POD" -- pg_isready -U postgres
-          kubectl -n "$NAMESPACE" exec "$POD" -- \
-            psql -U postgres -d mlflow -c 'SELECT 1 AS up;'
+          kubectl -n "$NAMESPACE" exec "$POD" -- psql -U postgres -d mlflow -c 'SELECT 1 AS up;'
 
       - name: Dump diagnostics on failure
         if: failure()

@@ -1,0 +1,40 @@
+# Overrides for the upstream obot/obot chart, used with:
+#   helm install platform-obot --repo https://charts.obot.ai obot \
+#     --version v0.21.1 -f deploy/helm/obot/values.yaml
+#
+# Why not an umbrella chart: Helm 3.21's CheckDependencies rejects the
+# obot subchart inside an umbrella (works on every other dep in this
+# repo). Install the upstream chart directly with this file as -f
+# override. Done automatically by `./deploy.sh --up obot`.
+#
+# Upstream values reference:
+#   https://github.com/obot-platform/obot/blob/main/chart/values.yaml
+
+replicaCount: 1
+
+service:
+  type: ClusterIP
+  port: 8080
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 512Mi
+  limits:
+    cpu: "1"
+    memory: 2Gi
+
+persistence:
+  enabled: true
+  size: 1Gi
+
+# `dev.useEmbeddedDb: true` makes obot use a local SQLite DB. Without
+# this OR an explicit OBOT_SERVER_DSN, the chart refuses to render
+# (Secret template guards production use).
+dev:
+  useEmbeddedDb: true
+
+# Server-level config flags. The chart maps these into env vars.
+config:
+  OBOT_SERVER_AUTH_REGISTRY_REQUIRE_AUTH: "false"
+  OBOT_SERVER_UPDATE_CHECK: "false"

@@ -32,7 +32,7 @@ flowchart TB
     subgraph data [Data plane]
         direction LR
         litellm[LiteLLM proxy :4000]
-        mcp[MCP Gateway :8811]
+        mcp[Obot MCP Gateway :8090]
         presidio_a[Presidio analyzer]
         presidio_o[Presidio anonymizer]
     end
@@ -175,54 +175,26 @@ docker compose up -d --force-recreate litellm
 
 This path runs the same services inside a local kind cluster — useful for
 practicing the Helm install flow and the cross-chart wiring without
-provisioning a real cluster.
+provisioning a real cluster. All orchestration is wrapped in
+[deploy.sh](deploy.sh):
 
 ```bash
-# 1. Cluster + namespace
-kind create cluster --config deploy/kind/kind-config.yaml --name agentic-platform
-kubectl create namespace agentic-platform
-
-# 2. Shared infrastructure
-helm dependency update deploy/helm/seaweedfs
-helm install platform-seaweedfs deploy/helm/seaweedfs -n agentic-platform --wait --timeout 5m
-helm install platform-redis     deploy/helm/redis     -n agentic-platform --wait --timeout 5m
-helm install platform-postgres  deploy/helm/postgres  -n agentic-platform --wait --timeout 5m
-helm install platform-falkordb  deploy/helm/falkordb  -n agentic-platform --wait --timeout 5m
-
-# 3. One-time bootstrap (S3 buckets + litellm DB)
-kubectl -n agentic-platform port-forward svc/platform-seaweedfs-all-in-one 8333:8333 &
-PF=$!
-AWS_ACCESS_KEY_ID=any AWS_SECRET_ACCESS_KEY=any aws --endpoint-url http://localhost:8333 \
-  s3 mb s3://tempo-traces s3://loki-logs s3://mlflow-artifacts s3://prometheus-blocks
-kill $PF
-kubectl -n agentic-platform exec deploy/platform-postgres -- \
-  psql -U postgres -c "CREATE DATABASE litellm"
-
-# 4. Telemetry + tracking
-for c in otel-collector tempo loki prometheus grafana mlflow; do
-  helm dependency update deploy/helm/$c
-done
-helm install platform-tempo          deploy/helm/tempo          -n agentic-platform --wait --timeout 5m
-helm install platform-loki           deploy/helm/loki           -n agentic-platform --wait --timeout 8m
-helm install platform-prometheus     deploy/helm/prometheus     -n agentic-platform --wait --timeout 5m
-helm install platform-grafana        deploy/helm/grafana        -n agentic-platform --wait --timeout 5m
-helm install platform-otel-collector deploy/helm/otel-collector -n agentic-platform --wait --timeout 5m
-helm install platform-mlflow         deploy/helm/mlflow         -n agentic-platform --wait --timeout 8m
-
-# 5. Data plane (presidio first, then litellm + mcp gateway)
-helm install platform-presidio    deploy/helm/presidio    -n agentic-platform --wait --timeout 5m
-helm install platform-mcp-gateway deploy/helm/mcp-gateway -n agentic-platform --wait --timeout 5m
-
-# 6. LiteLLM needs a Secret BEFORE install
-kubectl -n agentic-platform create secret generic platform-litellm-secrets \
-  --from-literal=masterkey="$(openssl rand -hex 32)" \
-  --from-literal=anthropic-api-key="${ANTHROPIC_API_KEY:-}" \
-  --from-literal=openai-api-key="${OPENAI_API_KEY:-}"
-helm dependency update deploy/helm/litellm
-helm install platform-litellm deploy/helm/litellm -n agentic-platform --wait --timeout 10m
-
-kubectl -n agentic-platform get pods,svc,pvc
+./deploy.sh --up                 # full stack (creates kind cluster if absent)
+./deploy.sh --up <chart>         # one chart + its hard deps (idempotent)
+./deploy.sh --status             # show current state
+./deploy.sh --down <chart>       # uninstall one chart
+./deploy.sh --down               # uninstall all + delete kind cluster
 ```
+
+The script:
+
+- reuses an existing `agentic-platform` kind cluster if present
+- runs `helm dependency update` + extracts subchart tarballs (Helm 3.21+
+  requires deps unpacked into `charts/<name>/`, not just present as `.tgz`)
+- bootstraps SeaweedFS buckets as an in-cluster Job (no host `aws` CLI
+  needed), creates the `litellm` Postgres database, and creates the
+  `platform-litellm-secrets` Secret automatically
+- uses `helm upgrade --install` so re-running is safe
 
 Try it (run each port-forward in its own terminal):
 
@@ -232,12 +204,48 @@ kubectl -n agentic-platform port-forward svc/platform-grafana 3000:80
 kubectl -n agentic-platform port-forward svc/platform-mlflow  5000:5000
 ```
 
-Tear down:
+<details>
+<summary>Equivalent manual steps (what <code>deploy.sh --up</code> does under the hood)</summary>
 
 ```bash
-helm uninstall -n agentic-platform $(helm list -n agentic-platform -q)
-kind delete cluster --name agentic-platform
+# 1. Cluster + namespace
+kind create cluster --config deploy/kind/kind-config.yaml --name agentic-platform
+kubectl create namespace agentic-platform
+
+# 2. For every chart with subchart deps: update + extract
+for c in seaweedfs tempo loki prometheus grafana otel-collector mlflow litellm; do
+  helm dependency update deploy/helm/$c
+  (cd deploy/helm/$c/charts && for t in *.tgz; do tar -xzf "$t"; done)
+done
+
+# 3. Shared infrastructure
+helm install platform-seaweedfs deploy/helm/seaweedfs -n agentic-platform --wait --timeout 5m
+helm install platform-redis     deploy/helm/redis     -n agentic-platform --wait --timeout 5m
+helm install platform-postgres  deploy/helm/postgres  -n agentic-platform --wait --timeout 5m
+helm install platform-falkordb  deploy/helm/falkordb  -n agentic-platform --wait --timeout 5m
+
+# 4. Bootstrap (buckets via in-cluster Job + litellm DB)
+# (see bootstrap_buckets / bootstrap_litellm_db in deploy.sh)
+
+# 5. Telemetry + tracking
+helm install platform-tempo          deploy/helm/tempo          -n agentic-platform --wait --timeout 5m
+helm install platform-loki           deploy/helm/loki           -n agentic-platform --wait --timeout 8m
+helm install platform-prometheus     deploy/helm/prometheus     -n agentic-platform --wait --timeout 5m
+helm install platform-grafana        deploy/helm/grafana        -n agentic-platform --wait --timeout 5m
+helm install platform-otel-collector deploy/helm/otel-collector -n agentic-platform --wait --timeout 5m
+helm install platform-mlflow         deploy/helm/mlflow         -n agentic-platform --wait --timeout 8m
+
+# 6. Data plane
+helm install platform-presidio    deploy/helm/presidio    -n agentic-platform --wait --timeout 5m
+helm install platform-obot         deploy/helm/obot         -n agentic-platform --wait --timeout 8m
+kubectl -n agentic-platform create secret generic platform-litellm-secrets \
+  --from-literal=masterkey="$(openssl rand -hex 32)" \
+  --from-literal=anthropic-api-key="${ANTHROPIC_API_KEY:-}" \
+  --from-literal=openai-api-key="${OPENAI_API_KEY:-}"
+helm install platform-litellm deploy/helm/litellm -n agentic-platform --wait --timeout 10m
 ```
+
+</details>
 
 ## Services
 
@@ -249,7 +257,7 @@ kind delete cluster --name agentic-platform
 | Infra | FalkorDB | Property-graph DB (GraphRAG) | `falkordb/falkordb:latest` | [deploy/helm/falkordb/](deploy/helm/falkordb/) |
 | Data | LiteLLM | OpenAI-compatible LLM proxy + Presidio PII masking | `ghcr.io/berriai/litellm:main-stable` | [deploy/helm/litellm/](deploy/helm/litellm/) |
 | Data | Presidio (analyzer + anonymizer) | PII detection + redaction sidecars for LiteLLM | `mcr.microsoft.com/presidio-{analyzer,anonymizer}` | [deploy/helm/presidio/](deploy/helm/presidio/) |
-| Data | MCP Gateway | Federated MCP tool endpoint | `docker/mcp-gateway:latest` | [deploy/helm/mcp-gateway/](deploy/helm/mcp-gateway/) |
+| Data | Obot | MCP gateway + registry + chat UI; deploys MCP servers as k8s workloads | `ghcr.io/obot-platform/obot:latest` | [deploy/helm/obot/](deploy/helm/obot/) |
 | Tracking | MLflow | Experiment + artifact tracking | `ghcr.io/mlflow/mlflow:v2.18.0` | [deploy/helm/mlflow/](deploy/helm/mlflow/) |
 | Telemetry | OTel Collector | OTLP fan-out to tempo/loki/prometheus | `otel/opentelemetry-collector-contrib:latest` | [deploy/helm/otel-collector/](deploy/helm/otel-collector/) |
 | Telemetry | Tempo | Traces backend (S3) | `grafana/tempo:latest` | [deploy/helm/tempo/](deploy/helm/tempo/) |
@@ -270,7 +278,7 @@ kind delete cluster --name agentic-platform
 | 6380 | falkordb | FalkorDB (RESP, graph) |
 | 3000 | falkordb | FalkorDB Browser UI |
 | 4000 | litellm | LiteLLM proxy + UI |
-| 8811 | mcp-gateway | MCP gateway |
+| 8090 | obot | Obot MCP Gateway + UI (container port 8080) |
 | 5000 | mlflow | MLflow UI + API |
 | 4317 | otel-collector | OTLP gRPC |
 | 4318 | otel-collector | OTLP HTTP |
@@ -289,7 +297,6 @@ kind delete cluster --name agentic-platform
 | [config/prometheus/prometheus.yml](config/prometheus/prometheus.yml) | volume mount | mirrored in [prometheus/values.yaml](deploy/helm/prometheus/values.yaml) | Scrape targets |
 | [config/grafana/provisioning/](config/grafana/provisioning/) | volume mount | mirrored in [grafana/values.yaml](deploy/helm/grafana/values.yaml) | Datasources + dashboards |
 | [config/litellm/config.yaml](config/litellm/config.yaml) | volume mount | mirrored in [litellm/values.yaml](deploy/helm/litellm/values.yaml) | Model list + PII callback + cache |
-| [config/mcp-gateway/config.yaml](config/mcp-gateway/config.yaml) | volume mount | mirrored in [mcp-gateway/values.yaml](deploy/helm/mcp-gateway/values.yaml) | MCP server list |
 | [config/seaweedfs-init/buckets.sh](config/seaweedfs-init/buckets.sh) | run by `seaweedfs-init` service | document only (see below) | One-shot bucket bootstrap |
 
 > **Implication of the dual-config layout.** Configs live in two places by
@@ -331,7 +338,7 @@ Each Helm chart has its own README with prerequisites and per-service options:
 **Data**
 - [LiteLLM](deploy/helm/litellm/README.md)
 - [Presidio](deploy/helm/presidio/README.md)
-- [MCP Gateway](deploy/helm/mcp-gateway/README.md)
+- [Obot](deploy/helm/obot/README.md)
 
 **Tracking**
 - [MLflow](deploy/helm/mlflow/README.md)
@@ -359,7 +366,7 @@ set by the dependency graph:
 | [deploy-postgres.yaml](.github/workflows/deploy-postgres.yaml) | postgres | `pg_isready` + `SELECT 1` |
 | [deploy-falkordb.yaml](.github/workflows/deploy-falkordb.yaml) | falkordb | `GRAPH.QUERY` + `GRAPH.LIST` |
 | [deploy-presidio.yaml](.github/workflows/deploy-presidio.yaml) | presidio | Analyze a PII string → anonymize → verify redaction |
-| [deploy-mcp-gateway.yaml](.github/workflows/deploy-mcp-gateway.yaml) | mcp-gateway | `/health` probe |
+| [deploy-obot.yaml](.github/workflows/deploy-obot.yaml) | obot | `/api/health` probe |
 | [deploy-prometheus.yaml](.github/workflows/deploy-prometheus.yaml) | prometheus | Self-scrape `up` metric returns 1 |
 | [deploy-grafana.yaml](.github/workflows/deploy-grafana.yaml) | grafana | `/api/health` + `/api/datasources` returns all three provisioned |
 | [deploy-tempo.yaml](.github/workflows/deploy-tempo.yaml) | seaweedfs + tempo | Push OTLP trace → poll Tempo until it appears in S3-backed storage |

@@ -239,32 +239,33 @@ services:
     networks:
       - network_bridge
 
-  mcp-gateway:
-    image: docker/mcp-gateway:latest
-    container_name: mcp-gateway
-    hostname: mcp-gateway
+  # Obot — MCP gateway + registry + chat UI from obot-platform.
+  # Replaces the earlier docker/mcp-gateway. Unlike that one, Obot is
+  # k8s-native (deploys each MCP server as a workload), so the same
+  # component runs in both Compose and the kind cluster.
+  #
+  # Host port is 8090 because SeaweedFS volume already owns 8080.
+  obot:
+    image: ghcr.io/obot-platform/obot:latest
+    container_name: obot
+    hostname: obot
     restart: unless-stopped
     ports:
-      - "8811:8811"
+      - "8090:8080"
     volumes:
-      - ./config/mcp-gateway/config.yaml:/etc/mcp-gateway/config.yaml:ro
-      # MCP Gateway shells out to `docker` to spawn MCP server containers
-      # listed in its config. Without the socket mount, every operation
-      # fails with "Cannot connect to the Docker daemon".
+      # Obot uses the docker socket to spawn MCP server containers when
+      # running outside k8s. Same docker socket dance as the old gateway.
       - /var/run/docker.sock:/var/run/docker.sock
-    # The image's ENTRYPOINT is already `docker-mcp gateway run`, so we
-    # only pass flag overrides. Default transport is stdio (exits when
-    # stdin closes in a detached container); `--transport streaming
-    # --port 8811` keeps it alive as an HTTP server.
-    command: ["--transport", "streaming", "--port", "8811"]
-    # Plain TCP probe — the gateway's HTTP routes vary by version and there
-    # is no documented `/health`.
+      - ./.obot:/data
+    environment:
+      OBOT_SERVER_AUTH_REGISTRY_REQUIRE_AUTH: "false"
+      OBOT_SERVER_UPDATE_CHECK: "false"
     healthcheck:
-      test: ["CMD-SHELL", "nc -z 127.0.0.1 8811 || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/api/health >/dev/null 2>&1 || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 5
-      start_period: 15s
+      start_period: 30s
     networks:
       - network_bridge
 

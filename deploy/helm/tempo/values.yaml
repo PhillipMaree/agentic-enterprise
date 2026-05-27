@@ -1,54 +1,53 @@
-# Overrides for grafana/tempo (single-binary; NOT tempo-distributed).
-# Mirrors config/tempo/tempo.yaml for the Compose stack.
+# Overrides for grafana/tempo (single-binary; NOT tempo-distributed),
+# installed directly via `--repo`. Mirrors config/tempo/tempo.yaml.
 #
 # Storage backend is the SeaweedFS S3 deployed by platform-seaweedfs.
-# Bucket `tempo-traces` must exist (see seaweedfs-init job).
+# Bucket `tempo-traces` must exist before this chart starts —
+# deploy.sh runs the bootstrap-buckets Job as a pre-install hook.
 
+# Inline tempo config. The chart wraps this in a ConfigMap and mounts it.
 tempo:
-  # Inline tempo config. The chart wraps this in a ConfigMap and mounts it.
-  tempo:
-    storage:
-      trace:
-        backend: s3
-        s3:
-          bucket: tempo-traces
-          # Service exposed by platform-seaweedfs (umbrella chart).
-          endpoint: platform-seaweedfs-all-in-one:8333
-          access_key: any
-          secret_key: any
-          insecure: true
-          forcepathstyle: true
-        wal:
-          path: /var/tempo/wal
+  storage:
+    trace:
+      backend: s3
+      s3:
+        bucket: tempo-traces
+        endpoint: platform-seaweedfs-all-in-one:8333
+        access_key: any
+        secret_key: any
+        insecure: true
+        forcepathstyle: true
+      wal:
+        path: /var/tempo/wal
 
-    receivers:
-      otlp:
-        protocols:
-          grpc:
-            endpoint: 0.0.0.0:4317
-          http:
-            endpoint: 0.0.0.0:4318
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: 0.0.0.0:4317
+        http:
+          endpoint: 0.0.0.0:4318
 
-    ingester:
-      trace_idle_period: 10s
-      max_block_bytes: 1_000_000
-      max_block_duration: 5m
+  ingester:
+    trace_idle_period: 10s
+    max_block_bytes: 1_000_000
+    max_block_duration: 5m
 
-    compactor:
-      compaction:
-        block_retention: 24h
+  compactor:
+    compaction:
+      block_retention: 24h
 
-  persistence:
-    enabled: true
-    size: 1Gi
+persistence:
+  enabled: true
+  size: 1Gi
 
-  service:
-    type: ClusterIP
+service:
+  type: ClusterIP
 
-  resources:
-    requests:
-      cpu: 100m
-      memory: 256Mi
-    limits:
-      cpu: "1"
-      memory: 1Gi
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: "1"
+    memory: 1Gi

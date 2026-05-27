@@ -1,89 +1,87 @@
-# Overrides for grafana/grafana.
+# Overrides for grafana/grafana, installed directly via `--repo`.
 # Mirrors config/grafana/provisioning/datasources/datasources.yaml.
 #
-# Admin password is set via a value here for dev simplicity. In a real
-# cluster pull it from a Secret with `admin.existingSecret`.
+# Admin password is set inline for dev simplicity. In a real cluster
+# pull it from a Secret with `admin.existingSecret`.
 
-grafana:
-  admin:
-    user: admin
-    # CHANGE THIS for any shared env. dev/kind default only.
-    password: change-me
+admin:
+  user: admin
+  # CHANGE THIS for any shared env. dev/kind default only.
+  password: change-me
 
-  service:
-    type: ClusterIP
+service:
+  type: ClusterIP
 
-  persistence:
+persistence:
+  enabled: true
+  size: 1Gi
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: "1"
+    memory: 1Gi
+
+env:
+  GF_FEATURE_TOGGLES_ENABLE: "traceqlEditor traceToMetrics"
+  GF_AUTH_ANONYMOUS_ENABLED: "false"
+  GF_USERS_ALLOW_SIGN_UP: "false"
+
+datasources:
+  datasources.yaml:
+    apiVersion: 1
+    datasources:
+      - name: Prometheus
+        uid: prometheus
+        type: prometheus
+        access: proxy
+        # The community prometheus chart exposes a service called
+        # `<release>-server` on port 80.
+        url: http://platform-prometheus-server
+        isDefault: true
+        editable: false
+
+      - name: Loki
+        uid: loki
+        type: loki
+        access: proxy
+        url: http://platform-loki:3100
+        editable: false
+        jsonData:
+          derivedFields:
+            - name: TraceID
+              matcherRegex: "trace_id=(\\w+)"
+              url: "$${__value.raw}"
+              datasourceUid: tempo
+
+      - name: Tempo
+        uid: tempo
+        type: tempo
+        access: proxy
+        url: http://platform-tempo:3200
+        editable: false
+        jsonData:
+          tracesToLogsV2:
+            datasourceUid: loki
+            spanStartTimeShift: "-5m"
+            spanEndTimeShift: "5m"
+            filterByTraceID: true
+          tracesToMetrics:
+            datasourceUid: prometheus
+            spanStartTimeShift: "-2m"
+            spanEndTimeShift: "2m"
+          serviceMap:
+            datasourceUid: prometheus
+          nodeGraph:
+            enabled: true
+
+# Dashboard sidecar: load any ConfigMap in this namespace labelled
+# grafana_dashboard=1 as a dashboard.
+sidecar:
+  dashboards:
     enabled: true
-    size: 1Gi
-
-  resources:
-    requests:
-      cpu: 100m
-      memory: 256Mi
-    limits:
-      cpu: "1"
-      memory: 1Gi
-
-  env:
-    GF_FEATURE_TOGGLES_ENABLE: "traceqlEditor traceToMetrics"
-    GF_AUTH_ANONYMOUS_ENABLED: "false"
-    GF_USERS_ALLOW_SIGN_UP: "false"
-
-  datasources:
-    datasources.yaml:
-      apiVersion: 1
-      datasources:
-        - name: Prometheus
-          uid: prometheus
-          type: prometheus
-          access: proxy
-          # The community prometheus chart exposes a service called
-          # `<release>-server` on port 80.
-          url: http://platform-prometheus-server
-          isDefault: true
-          editable: false
-
-        - name: Loki
-          uid: loki
-          type: loki
-          access: proxy
-          url: http://platform-loki:3100
-          editable: false
-          jsonData:
-            derivedFields:
-              - name: TraceID
-                matcherRegex: "trace_id=(\\w+)"
-                url: "$${__value.raw}"
-                datasourceUid: tempo
-
-        - name: Tempo
-          uid: tempo
-          type: tempo
-          access: proxy
-          url: http://platform-tempo:3200
-          editable: false
-          jsonData:
-            tracesToLogsV2:
-              datasourceUid: loki
-              spanStartTimeShift: "-5m"
-              spanEndTimeShift: "5m"
-              filterByTraceID: true
-            tracesToMetrics:
-              datasourceUid: prometheus
-              spanStartTimeShift: "-2m"
-              spanEndTimeShift: "2m"
-            serviceMap:
-              datasourceUid: prometheus
-            nodeGraph:
-              enabled: true
-
-  # Dashboard sidecar: load any ConfigMap in this namespace labelled
-  # grafana_dashboard=1 as a dashboard. Drop dashboard JSON in such a
-  # ConfigMap and Grafana picks it up.
-  sidecar:
-    dashboards:
-      enabled: true
-      label: grafana_dashboard
-      labelValue: "1"
-      searchNamespace: ALL
+    label: grafana_dashboard
+    labelValue: "1"
+    searchNamespace: ALL

@@ -5,44 +5,47 @@ on:
     branches: [main]
     paths:
       - "deploy/helm/otel-collector/**"
+      - "deploy/helm/tempo/**"
+      - "deploy/helm/loki/**"
+      - "deploy/helm/prometheus/**"
+      - "deploy/helm/seaweedfs/**"
       - "deploy/kind/kind-config.yaml"
+      - "deploy.sh"
       - ".github/workflows/deploy-otel-collector.yaml"
   pull_request:
     branches: [main]
     paths:
       - "deploy/helm/otel-collector/**"
+      - "deploy/helm/tempo/**"
+      - "deploy/helm/loki/**"
+      - "deploy/helm/prometheus/**"
+      - "deploy/helm/seaweedfs/**"
       - "deploy/kind/kind-config.yaml"
+      - "deploy.sh"
       - ".github/workflows/deploy-otel-collector.yaml"
 
 permissions:
   contents: read
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 jobs:
   deploy:
-    name: helm install on ephemeral kind
+    name: deploy.sh --up otel-collector (+ tempo + loki + prometheus)
     runs-on: ubuntu-latest
     defaults:
       run:
         shell: bash
     env:
       NAMESPACE: agentic-platform
+      RELEASE: platform-otel-collector
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - name: Set up Helm
-        uses: azure/setup-helm@v4
+      - uses: azure/setup-helm@v4
         with:
-          version: v3.15.4
-
-      - name: helm dependency update
-        run: |
-          for c in seaweedfs tempo loki prometheus otel-collector; do
-            helm dependency update "deploy/helm/$c"
-          done
-
-      - name: helm lint otel-collector
-        run: helm lint deploy/helm/otel-collector
+          version: v3.21.0
 
       - name: Create kind cluster
         uses: helm/kind-action@v1
@@ -50,39 +53,24 @@ jobs:
           config: deploy/kind/kind-config.yaml
           cluster_name: agentic-platform
 
-      - name: Create namespace
-        run: kubectl create namespace "$NAMESPACE"
-
-      - name: Install backends (seaweedfs + tempo + loki + prometheus)
+      - name: Install backends + otel-collector via deploy.sh
         run: |
-          helm install platform-seaweedfs  deploy/helm/seaweedfs  -n "$NAMESPACE" --wait --timeout 5m
-          # Buckets for tempo + loki.
-          kubectl -n "$NAMESPACE" port-forward svc/platform-seaweedfs-all-in-one 8333:8333 >/tmp/pf-s3.log 2>&1 &
-          PF=$!
-          for i in $(seq 1 30); do curl -fsS http://localhost:8333/ >/dev/null 2>&1 && break; sleep 1; done
-          pip install --quiet awscli
-          AWS_ACCESS_KEY_ID=any AWS_SECRET_ACCESS_KEY=any AWS_DEFAULT_REGION=us-east-1 \
-            aws --endpoint-url http://localhost:8333 s3 mb s3://tempo-traces s3://loki-logs
-          kill $PF 2>/dev/null || true
+          # Bring up the three backends first so the OTLP fan-out has
+          # somewhere to land. deploy.sh chains seaweedfs + bucket-init
+          # automatically.
+          ./deploy.sh --up tempo
+          ./deploy.sh --up loki
+          ./deploy.sh --up prometheus
+          ./deploy.sh --up otel-collector
 
-          helm install platform-tempo      deploy/helm/tempo      -n "$NAMESPACE" --wait --timeout 5m
-          helm install platform-loki       deploy/helm/loki       -n "$NAMESPACE" --wait --timeout 8m
-          helm install platform-prometheus deploy/helm/prometheus -n "$NAMESPACE" --wait --timeout 8m
-
-      - name: Install platform-otel-collector
-        run: |
-          helm install platform-otel-collector deploy/helm/otel-collector \
-            --namespace "$NAMESPACE" \
-            --wait --timeout 5m
-          kubectl -n "$NAMESPACE" get pods,svc
-
-      - name: Integration test — OTLP fan-out (trace → Tempo, log → Loki, metric → Prometheus)
+      - name: Smoke test OTLP fan-out (trace → Tempo, log → Loki, metric → Prom)
         run: |
           set -euo pipefail
-          kubectl -n "$NAMESPACE" port-forward svc/platform-otel-collector 4318:4318 >/tmp/pf-otel.log 2>&1 &
-          kubectl -n "$NAMESPACE" port-forward svc/platform-tempo          3200:3200 >/tmp/pf-tempo.log 2>&1 &
-          kubectl -n "$NAMESPACE" port-forward svc/platform-loki           3100:3100 >/tmp/pf-loki.log 2>&1 &
-          kubectl -n "$NAMESPACE" port-forward svc/platform-prometheus-server 9090:80 >/tmp/pf-prom.log 2>&1 &
+          # Service is `${RELEASE}-opentelemetry-collector` (release + chart name).
+          kubectl -n "$NAMESPACE" port-forward svc/${RELEASE}-opentelemetry-collector 4318:4318 >/tmp/pf-otel.log 2>&1 &
+          kubectl -n "$NAMESPACE" port-forward svc/platform-tempo                     3200:3200 >/tmp/pf-tempo.log 2>&1 &
+          kubectl -n "$NAMESPACE" port-forward svc/platform-loki                      3100:3100 >/tmp/pf-loki.log 2>&1 &
+          kubectl -n "$NAMESPACE" port-forward svc/platform-prometheus-server         9090:80   >/tmp/pf-prom.log 2>&1 &
           trap 'jobs -p | xargs -r kill 2>/dev/null || true' EXIT
           for i in $(seq 1 60); do
             curl -fsS http://localhost:3200/ready >/dev/null 2>&1 && \
@@ -95,22 +83,16 @@ jobs:
           NOW_NS="$(date +%s)000000000"
           NEXT_NS="$(($(date +%s)+1))000000000"
 
-          # Trace
           curl -fsS -X POST http://localhost:4318/v1/traces \
             -H 'Content-Type: application/json' \
             -d "{\"resourceSpans\":[{\"resource\":{\"attributes\":[{\"key\":\"service.name\",\"value\":{\"stringValue\":\"ci-probe\"}}]},\"scopeSpans\":[{\"spans\":[{\"traceId\":\"${TRACE_ID}\",\"spanId\":\"bbbbbbbbbbbbbbbb\",\"name\":\"ci-otel-span\",\"kind\":1,\"startTimeUnixNano\":\"${NOW_NS}\",\"endTimeUnixNano\":\"${NEXT_NS}\"}]}]}]}"
-
-          # Log
           curl -fsS -X POST http://localhost:4318/v1/logs \
             -H 'Content-Type: application/json' \
             -d "{\"resourceLogs\":[{\"resource\":{\"attributes\":[{\"key\":\"service.name\",\"value\":{\"stringValue\":\"ci-probe\"}}]},\"scopeLogs\":[{\"logRecords\":[{\"timeUnixNano\":\"${NOW_NS}\",\"severityText\":\"INFO\",\"body\":{\"stringValue\":\"hello otel log\"}}]}]}]}"
-
-          # Metric
           curl -fsS -X POST http://localhost:4318/v1/metrics \
             -H 'Content-Type: application/json' \
             -d "{\"resourceMetrics\":[{\"resource\":{\"attributes\":[{\"key\":\"service.name\",\"value\":{\"stringValue\":\"ci-probe\"}}]},\"scopeMetrics\":[{\"metrics\":[{\"name\":\"ci_probe_counter\",\"sum\":{\"dataPoints\":[{\"asInt\":\"42\",\"timeUnixNano\":\"${NOW_NS}\"}],\"aggregationTemporality\":2,\"isMonotonic\":true}}]}]}]}"
 
-          # Verify each backend received its signal.
           OK_TRACE=0; OK_LOG=0; OK_METRIC=0
           for i in $(seq 1 30); do
             [ "$OK_TRACE" = 0 ] && curl -fsS "http://localhost:3200/api/traces/${TRACE_ID}" 2>/dev/null | grep -q ci-otel-span && OK_TRACE=1 || true
@@ -132,6 +114,5 @@ jobs:
           kubectl -n "$NAMESPACE" get all
           kubectl -n "$NAMESPACE" describe pods
           for c in otel-collector tempo loki prometheus seaweedfs; do
-            echo "=== $c ==="
             kubectl -n "$NAMESPACE" logs -l app.kubernetes.io/instance=platform-$c --all-containers --tail=200 || true
           done
