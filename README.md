@@ -352,38 +352,62 @@ Each Helm chart has its own README with prerequisites and per-service options:
 
 ## CI
 
-Each chart has its own workflow under [.github/workflows/](.github/workflows/),
-gated by `paths:` filters on its chart directory. Workflows spin up an
-**ephemeral kind cluster** inside the GitHub Actions runner, install the
-chart (plus any hard dependencies it needs), and run an **integration test**
-that exercises the service end-to-end — not just a health probe. Scope is
-set by the dependency graph:
+**One workflow per push**, with parallel chart-deploy jobs inside it.
+[deploy.yaml](.github/workflows/deploy.yaml) is the only trigger
+workflow; it computes which charts changed using
+[`dorny/paths-filter`](https://github.com/dorny/paths-filter), then
+chains chart jobs in **dependency order**:
 
-| Workflow | Installs | Integration test |
-| --- | --- | --- |
-| [deploy-seaweedfs.yaml](.github/workflows/deploy-seaweedfs.yaml) | seaweedfs | HTTP GET against the S3 endpoint |
-| [deploy-redis.yaml](.github/workflows/deploy-redis.yaml) | redis | `PING` + `MODULE LIST` (verifies RedisJSON + RediSearch) |
-| [deploy-postgres.yaml](.github/workflows/deploy-postgres.yaml) | postgres | `pg_isready` + `SELECT 1` |
-| [deploy-falkordb.yaml](.github/workflows/deploy-falkordb.yaml) | falkordb | `GRAPH.QUERY` + `GRAPH.LIST` |
-| [deploy-presidio.yaml](.github/workflows/deploy-presidio.yaml) | presidio | Analyze a PII string → anonymize → verify redaction |
-| [deploy-obot.yaml](.github/workflows/deploy-obot.yaml) | obot | `/api/health` probe |
-| [deploy-prometheus.yaml](.github/workflows/deploy-prometheus.yaml) | prometheus | Self-scrape `up` metric returns 1 |
-| [deploy-grafana.yaml](.github/workflows/deploy-grafana.yaml) | grafana | `/api/health` + `/api/datasources` returns all three provisioned |
-| [deploy-tempo.yaml](.github/workflows/deploy-tempo.yaml) | seaweedfs + tempo | Push OTLP trace → poll Tempo until it appears in S3-backed storage |
-| [deploy-loki.yaml](.github/workflows/deploy-loki.yaml) | seaweedfs + loki | Push log → query Loki until it appears |
-| [deploy-otel-collector.yaml](.github/workflows/deploy-otel-collector.yaml) | seaweedfs + tempo + loki + prometheus + otel | OTLP trace/log/metric fan-out — verify each lands in its backend |
-| [deploy-mlflow.yaml](.github/workflows/deploy-mlflow.yaml) | postgres + seaweedfs + mlflow | Create experiment → log run + metric → read back via REST |
-| [deploy-litellm.yaml](.github/workflows/deploy-litellm.yaml) | postgres + redis + presidio + otel + litellm | `POST /v1/chat/completions` with `mock_response` model |
-| [deploy-platform-e2e.yaml](.github/workflows/deploy-platform-e2e.yaml) | **the entire stack** | LiteLLM chat → verify trace in Tempo, metrics in Prometheus |
+```text
+changes  (detect which charts changed)
+   ├─► seaweedfs           ┐
+   ├─► redis               │  Layer 0 — no chart deps. Parallel.
+   ├─► postgres            │
+   ├─► falkordb            │
+   ├─► presidio            │
+   ├─► obot                │
+   ├─► prometheus          │
+   ├─► grafana             │
+   └─► otel-collector      ┘
+        ↓
+   ├─► tempo               │  Layer 1 — needs seaweedfs.
+   └─► loki                │
+        ↓
+   └─► mlflow              │  Layer 2 — needs postgres + seaweedfs.
+        ↓
+   └─► litellm             │  Layer 3 — needs postgres + redis +
+                           │            presidio + otel-collector.
+        ↓
+   └─► e2e (full stack)    │  Skipped if any chart above failed.
+```
 
-**Why LiteLLM CI uses `mock_response`**: the `mock_response` model param
-makes LiteLLM return canned text without calling the upstream provider, so
-the CI run exercises the full request path (auth, presidio masking,
-Postgres logging, OTel emission) without burning provider credits or
-needing real API keys in repo secrets.
+If a layer-0 chart (e.g. `seaweedfs`) fails, its layer-1+ dependents
+(`tempo`, `loki`, `mlflow`, `e2e`) skip via `needs:` chains. Layer-0
+charts are independent of each other — `falkordb` failing doesn't
+affect `redis`. Click into the run on github.com to see every job's
+status in one graph.
 
-**Why an e2e workflow on top of per-chart workflows**: per-chart workflows
-catch regressions inside one chart. The e2e workflow catches **cross-chart**
-regressions — e.g. "I changed the OTel exporter endpoint and now nothing
-reaches Tempo", which all per-chart tests would still pass cleanly. It's
-gated on `paths: deploy/helm/**` so any chart change re-runs it.
+**Each chart job** calls the reusable
+[`_deploy-chart.yaml`](.github/workflows/_deploy-chart.yaml), which:
+
+1. Spins up an **ephemeral kind cluster**
+2. Runs `./deploy.sh --up <chart>` (which installs the chart's hard
+   deps automatically — same code path as local dev)
+3. Runs the chart's smoke test from
+   [.github/scripts/smoke-&lt;chart&gt;.sh](.github/scripts/) — these are
+   **integration tests**, not just health probes (S3 GET, redis
+   `PING` + `MODULE LIST`, PII analyze/anonymize round trip, OTLP
+   trace round trip, MLflow REST round trip, LiteLLM chat completion
+   with `mock_response`, etc.)
+
+**LiteLLM mocking**: CI sets `LITELLM_USE_MOCK_MODELS=1`, which makes
+`deploy.sh` overlay [values.ci-mock.yaml](deploy/helm/litellm/values.ci-mock.yaml)
+when installing LiteLLM. Every model returns canned `mock_response`
+text — the proxy exercises auth + Postgres logging + OTel emission
+without hitting Anthropic/OpenAI. No repo secrets needed.
+
+**The e2e job** runs the full chain test
+([smoke-platform-e2e.sh](.github/scripts/smoke-platform-e2e.sh)):
+drive a chat completion through LiteLLM (mock model), then verify
+the resulting metrics arrived in Prometheus. Catches cross-chart
+regressions that per-chart tests can't.
