@@ -1,7 +1,7 @@
 name: deploy
-# push events carry head_commit.message; pull_request events don't, so
-# fall back to the PR title (then the ref) instead of showing "2/merge".
-run-name: ${{ github.event.head_commit.message || github.event.pull_request.title || github.ref_name }}
+# push events expose head_commit.message, so the run-name is always the
+# commit just pushed (no PR-title games, no "2/merge").
+run-name: ${{ github.event.head_commit.message || github.ref_name }}
 
 # One workflow, many jobs. Jobs run in dependency order; downstream
 # jobs are skipped if any of their `needs:` failed (i.e. seaweedfs
@@ -10,16 +10,15 @@ run-name: ${{ github.event.head_commit.message || github.event.pull_request.titl
 # Click into the run → see all jobs as a graph. Skipped jobs (path-
 # filter mismatched or dep failed) show greyed out.
 #
-# The workflow has NO trigger-level `paths:` filter on purpose: it must
-# run on every PR/main push so the `gate` job always reports a status
-# (it's the single required check for branch protection). Which charts
-# actually deploy is still decided per-job by the `changes` job below.
+# Triggered on push to ANY branch (not pull_request): push events carry
+# the head commit message for the run-name, and their check runs attach to
+# the commit SHA — so they still surface on the PR and gate branch
+# protection. No trigger-level `paths:` filter, so the `gate` job always
+# reports; per-chart `changes` still decides what actually deploys.
 
 on:
   push:
-    branches: [main]
-  pull_request:
-    branches: [main]
+    branches: ['**']
 
 permissions:
   contents: read
