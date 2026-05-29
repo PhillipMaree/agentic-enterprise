@@ -370,7 +370,7 @@ jobs:
     steps:
       - name: Fail if any job failed or was cancelled
         run: |
-          results='${{ join(needs.*.result, ",") }}'
+          results='${{ join(needs.*.result, ',') }}'
           echo "upstream results: $results"
           case ",$results," in
             *,failure,*|*,cancelled,*)
