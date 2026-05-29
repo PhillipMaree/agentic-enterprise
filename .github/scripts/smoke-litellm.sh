@@ -2,7 +2,12 @@
 set -euo pipefail
 source "$(dirname "$0")/_common.sh"
 
-kubectl -n "$NAMESPACE" port-forward svc/${RELEASE} 4000:4000 >/tmp/pf.log 2>&1 &
+# Forward the Deployment, not the Service: the litellm Service selector
+# also matches the short-lived `*-migrations` Job pod, and
+# `port-forward svc/...` ignores readiness — on a fresh cluster it can
+# pick the migrations pod (no `http` port) and fail. deploy/... only ever
+# resolves to the proxy pod.
+kubectl -n "$NAMESPACE" port-forward deploy/${RELEASE} 4000:4000 >/tmp/pf.log 2>&1 &
 PF=$!
 trap 'kill $PF 2>/dev/null || true' EXIT
 wait_for_port 4000

@@ -4,7 +4,12 @@
 set -euo pipefail
 source "$(dirname "$0")/_common.sh"
 
-kubectl -n "$NAMESPACE" port-forward svc/platform-litellm           4000:4000 >/tmp/pf-litellm.log 2>&1 &
+# Forward the Deployment, not the Service: the litellm Service selector
+# also matches the short-lived `*-migrations` Job pod, and
+# `port-forward svc/...` ignores readiness — on a fresh cluster it can
+# pick the migrations pod (no `http` port) and fail. deploy/... only ever
+# resolves to the proxy pod.
+kubectl -n "$NAMESPACE" port-forward deploy/platform-litellm        4000:4000 >/tmp/pf-litellm.log 2>&1 &
 kubectl -n "$NAMESPACE" port-forward svc/platform-prometheus-server 9090:80   >/tmp/pf-prom.log 2>&1 &
 trap 'jobs -p | xargs -r kill 2>/dev/null || true' EXIT
 wait_for_port 4000
