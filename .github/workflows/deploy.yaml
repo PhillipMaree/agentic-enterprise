@@ -1,5 +1,7 @@
 name: deploy
-run-name: deploy (${{ github.event.head_commit.message || github.ref_name }})
+# push events carry head_commit.message; pull_request events don't, so
+# fall back to the PR title (then the ref) instead of showing "2/merge".
+run-name: ${{ github.event.head_commit.message || github.event.pull_request.title || github.ref_name }}
 
 # One workflow, many jobs. Jobs run in dependency order; downstream
 # jobs are skipped if any of their `needs:` failed (i.e. seaweedfs
