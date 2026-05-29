@@ -7,27 +7,21 @@ run-name: deploy (${{ github.event.head_commit.message || github.ref_name }})
 #
 # Click into the run → see all jobs as a graph. Skipped jobs (path-
 # filter mismatched or dep failed) show greyed out.
+#
+# The workflow has NO trigger-level `paths:` filter on purpose: it must
+# run on every PR/main push so the `gate` job always reports a status
+# (it's the single required check for branch protection). Which charts
+# actually deploy is still decided per-job by the `changes` job below.
 
 on:
   push:
     branches: [main]
-    paths:
-      - "deploy/**"
-      - "deploy.sh"
-      - ".github/workflows/deploy.yaml"
-      - ".github/workflows/_deploy-chart.yaml"
-      - ".github/scripts/**"
   pull_request:
     branches: [main]
-    paths:
-      - "deploy/**"
-      - "deploy.sh"
-      - ".github/workflows/deploy.yaml"
-      - ".github/workflows/_deploy-chart.yaml"
-      - ".github/scripts/**"
 
 permissions:
   contents: read
+  actions: write   # cancel-on-failure: the first failing job aborts the run
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
@@ -339,3 +333,48 @@ jobs:
             echo "=== $rel ==="
             kubectl -n "$NAMESPACE" logs -l "app.kubernetes.io/instance=$rel" --all-containers --tail=100 || true
           done
+
+      - name: Abort the whole run on failure
+        # Fail-fast: cancel sibling jobs the moment e2e fails. Runs after
+        # the diagnostics dump above so logs are captured first.
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh run cancel "${{ github.run_id }}"
+
+  # ----- Merge gate: the single required check for branch protection ------
+  # Runs unconditionally (always()) so it ALWAYS reports a status, even
+  # when every chart job skipped. Red iff any job actually failed or was
+  # cancelled; skipped/success both pass. Mark THIS job required on main —
+  # never the individual chart jobs, which skip via the `changes` filter
+  # and would otherwise leave a required check pending forever.
+  gate:
+    needs:
+      - changes
+      - seaweedfs
+      - redis
+      - postgres
+      - falkordb
+      - presidio
+      - obot
+      - prometheus
+      - grafana
+      - otel-collector
+      - tempo
+      - loki
+      - mlflow
+      - litellm
+      - e2e
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail if any job failed or was cancelled
+        run: |
+          results='${{ join(needs.*.result, ",") }}'
+          echo "upstream results: $results"
+          case ",$results," in
+            *,failure,*|*,cancelled,*)
+              echo "::error::a required job failed or was cancelled"; exit 1 ;;
+            *)
+              echo "all jobs succeeded or were skipped" ;;
+          esac

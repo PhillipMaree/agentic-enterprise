@@ -34,6 +34,9 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: write   # cancel-on-failure: a failed chart aborts the run
     defaults:
       run:
         shell: bash
@@ -81,3 +84,12 @@ jobs:
             echo "=== $rel ==="
             kubectl -n "$NAMESPACE" logs -l "app.kubernetes.io/instance=$rel" --all-containers --tail=100 || true
           done
+
+      - name: Abort the whole run on failure
+        # Fail-fast: the first chart to fail cancels every sibling job so the
+        # run stops left-to-right instead of finishing the rest of the layer.
+        # Runs after diagnostics so logs are captured first.
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh run cancel "${{ github.run_id }}"
