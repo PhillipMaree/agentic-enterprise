@@ -18,12 +18,8 @@ Two consumption surfaces, both running the same set of services:
 
 ## Architecture
 
-![agentic-platform architecture](docs/img/architecture.png)
-
-<details>
-<summary>Mermaid source (re-render with <code>mmdc -i README.md -o docs/img/architecture.png</code> or view via the GitHub renderer)</summary>
-
 ```mermaid
+%%{init: {'theme': 'dark'}}%%
 flowchart TB
     subgraph clients [Agentic apps]
         app[Your agent / workflow]
@@ -82,18 +78,16 @@ flowchart TB
     grafana --> loki
     grafana --> prom
 
-    classDef dataplane fill:#e1f5ff,stroke:#0288d1,color:#01579b
-    classDef telemetryplane fill:#fff4e1,stroke:#f57c00,color:#e65100
-    classDef trackingplane fill:#f0e8ff,stroke:#7e57c2,color:#4527a0
-    classDef infraplane fill:#e8f5e9,stroke:#388e3c,color:#1b5e20
+    classDef dataplane fill:#0d3b66,stroke:#4fc3f7,color:#e1f5ff
+    classDef telemetryplane fill:#5a3000,stroke:#ffb74d,color:#fff3e0
+    classDef trackingplane fill:#311b6b,stroke:#b39ddb,color:#ede7f6
+    classDef infraplane fill:#14401a,stroke:#81c784,color:#e8f5e9
 
     class litellm,mcp,presidio_a,presidio_o dataplane
     class otel,tempo,loki,prom,grafana telemetryplane
     class mlflow trackingplane
     class redis,postgres,falkordb,seaweedfs infraplane
 ```
-
-</details>
 
 **Reading the diagram**
 
