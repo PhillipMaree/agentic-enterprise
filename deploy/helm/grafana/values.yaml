@@ -4,10 +4,12 @@
 # Admin password is set inline for dev simplicity. In a real cluster
 # pull it from a Secret with `admin.existingSecret`.
 
-admin:
-  user: admin
-  # CHANGE THIS for any shared env. dev/kind default only.
-  password: change-me
+# The chart's top-level keys are `adminUser` / `adminPassword` —
+# not `admin.user` / `admin.password` (that path is for an
+# externally-managed Secret pointer, not inline credentials).
+adminUser: admin
+# CHANGE THIS for any shared env. dev/kind default only.
+adminPassword: change-me
 
 service:
   type: ClusterIP
@@ -60,7 +62,9 @@ datasources:
         uid: tempo
         type: tempo
         access: proxy
-        url: http://platform-tempo:3200
+        # The grafana/tempo chart's Service exposes the HTTP query API
+        # on port 3100 (chart convention), not Tempo's vanilla 3200.
+        url: http://platform-tempo:3100
         editable: false
         jsonData:
           tracesToLogsV2:

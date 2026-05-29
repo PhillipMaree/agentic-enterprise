@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# Smoke: create an experiment, start a run, log a metric, read it back.
+# MLflow returns pretty-printed JSON ("key": value with spaces), so we
+# parse it with python instead of grep.
+
 set -euo pipefail
 source "$(dirname "$0")/_common.sh"
 
@@ -8,16 +12,20 @@ trap 'kill $PF 2>/dev/null || true' EXIT
 wait_for_port 5000
 wait_for_http http://localhost:5000/health
 
+# Use a unique name so re-runs against the same cluster don't clash.
+EXP_NAME="ci-probe-$(date +%s)-$$"
 EXP_RESP="$(curl -fsS -X POST http://localhost:5000/api/2.0/mlflow/experiments/create \
-  -H 'Content-Type: application/json' -d '{"name":"ci-probe-'"$(date +%s)"'"}')"
-EXP_ID="$(echo "$EXP_RESP" | grep -oE '"experiment_id":"[0-9]+"' | grep -oE '[0-9]+')"
-[ -n "$EXP_ID" ] || { echo "no experiment_id in $EXP_RESP"; exit 1; }
+  -H 'Content-Type: application/json' -d "{\"name\":\"${EXP_NAME}\"}")"
+echo "$EXP_RESP"
+EXP_ID="$(echo "$EXP_RESP" | python3 -c 'import json,sys; print(json.load(sys.stdin)["experiment_id"])')"
+[ -n "$EXP_ID" ] || { echo "no experiment_id"; exit 1; }
 
 RUN_RESP="$(curl -fsS -X POST http://localhost:5000/api/2.0/mlflow/runs/create \
   -H 'Content-Type: application/json' \
   -d "{\"experiment_id\":\"${EXP_ID}\",\"start_time\":$(date +%s000)}")"
-RUN_ID="$(echo "$RUN_RESP" | grep -oE '"run_id":"[a-f0-9]+"' | grep -oE '[a-f0-9]{32}')"
-[ -n "$RUN_ID" ] || { echo "no run_id in $RUN_RESP"; exit 1; }
+echo "$RUN_RESP"
+RUN_ID="$(echo "$RUN_RESP" | python3 -c 'import json,sys; print(json.load(sys.stdin)["run"]["info"]["run_id"])')"
+[ -n "$RUN_ID" ] || { echo "no run_id"; exit 1; }
 
 curl -fsS -X POST http://localhost:5000/api/2.0/mlflow/runs/log-metric \
   -H 'Content-Type: application/json' \

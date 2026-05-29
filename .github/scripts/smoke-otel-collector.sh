@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-# Standalone smoke: the collector itself is up and accepting OTLP. The
-# full trace/log/metric fan-out is exercised in smoke-platform-e2e.sh
-# (where tempo/loki/prometheus are also installed).
+# Standalone smoke: collector is up and accepts OTLP. The full
+# trace/log/metric fan-out is exercised in smoke-platform-e2e.sh.
 set -euo pipefail
 source "$(dirname "$0")/_common.sh"
 
