@@ -1,7 +1,9 @@
 name: deploy
-# push events expose head_commit.message, so the run-name is always the
-# commit just pushed (no PR-title games, no "2/merge").
-run-name: ${{ github.event.head_commit.message || github.ref_name }}
+# No `run-name:` on purpose. When it's unset, GitHub titles the run with the
+# commit's first line (subject) automatically. An explicit
+# run-name: ${{ github.event.head_commit.message }} dumps the FULL multi-line
+# message (body + trailer) into the title, and expressions have no way to
+# trim to the first line.
 
 # One workflow, many jobs. Jobs run in dependency order; downstream
 # jobs are skipped if any of their `needs:` failed (i.e. seaweedfs
