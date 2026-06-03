@@ -2,16 +2,24 @@
 set -euo pipefail
 source "$(dirname "$0")/_common.sh"
 
-# Forward the Deployment, not the Service: the litellm Service selector
-# also matches the short-lived `*-migrations` Job pod, and
-# `port-forward svc/...` ignores readiness — on a fresh cluster it can
-# pick the migrations pod (no `http` port) and fail. deploy/... only ever
-# resolves to the proxy pod.
-kubectl -n "$NAMESPACE" port-forward deploy/${RELEASE} 4000:4000 >/tmp/pf.log 2>&1 &
+# The litellm Deployment and its Prisma `*-migrations` Job share the same
+# app.kubernetes.io/{name,instance} labels, so `port-forward deploy/...`
+# (like svc/...) can resolve to the short-lived migrations pod — which never
+# listens on 4000, so every request returns 000 until we time out. Pick the
+# proxy pod explicitly: only ReplicaSet-managed pods carry pod-template-hash;
+# the Job pod does not. Wait for the rollout first so exactly one is Running.
+kubectl -n "$NAMESPACE" rollout status deploy/${RELEASE} --timeout=180s
+POD="$(kubectl -n "$NAMESPACE" get pod \
+  -l "app.kubernetes.io/instance=${RELEASE},pod-template-hash" \
+  --field-selector=status.phase=Running \
+  -o jsonpath='{.items[0].metadata.name}')"
+[ -n "$POD" ] || { echo "no Running proxy pod for ${RELEASE}" >&2; exit 1; }
+echo "port-forwarding pod/${POD}"
+kubectl -n "$NAMESPACE" port-forward "pod/${POD}" 4000:4000 >/tmp/pf.log 2>&1 &
 PF=$!
 trap 'kill $PF 2>/dev/null || true' EXIT
 wait_for_port 4000
-wait_for_http http://localhost:4000/health/readiness
+wait_for_http http://localhost:4000/health/readiness || { cat /tmp/pf.log >&2; exit 1; }
 
 curl -fsS http://localhost:4000/health/readiness | tee /tmp/ready.json
 grep -q '"healthy"' /tmp/ready.json
