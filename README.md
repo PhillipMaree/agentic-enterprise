@@ -2,9 +2,11 @@
 
 End-to-end local development platform for agentic AI: an LLM gateway with
 built-in PII masking, an MCP tool federation gateway, experiment tracking,
-and a full traces/logs/metrics observability stack — all glued together so
-an agentic app needs to know about one ingress (LiteLLM) and one telemetry
-egress (OTel Collector) and nothing else.
+a full traces/logs/metrics observability stack, and a Keycloak identity
+provider for OIDC auth (with token exchange across the agent chain) — all
+glued together so an agentic app needs to know about one ingress (LiteLLM),
+one telemetry egress (OTel Collector), and one IdP (Keycloak), and nothing
+else.
 
 Two consumption surfaces, both running the same set of services:
 
@@ -23,6 +25,10 @@ Two consumption surfaces, both running the same set of services:
 flowchart TB
     subgraph clients [Agentic apps]
         app[Your agent / workflow]
+    end
+
+    subgraph authz [Auth]
+        keycloak[Keycloak IdP :18080]
     end
 
     subgraph data [Data plane]
@@ -54,6 +60,7 @@ flowchart TB
         seaweedfs[(SeaweedFS S3 :8333)]
     end
 
+    app -->|OIDC login + token exchange| keycloak
     app -->|chat completions| litellm
     app -->|tool calls| mcp
     app -.->|OTLP| otel
@@ -82,11 +89,13 @@ flowchart TB
     classDef telemetryplane fill:#5a3000,stroke:#ffb74d,color:#fff3e0
     classDef trackingplane fill:#311b6b,stroke:#b39ddb,color:#ede7f6
     classDef infraplane fill:#14401a,stroke:#81c784,color:#e8f5e9
+    classDef authplane fill:#4a1530,stroke:#f48fb1,color:#fce4ec
 
     class litellm,mcp,presidio_a,presidio_o dataplane
     class otel,tempo,loki,prom,grafana telemetryplane
     class mlflow trackingplane
     class redis,postgres,falkordb,seaweedfs infraplane
+    class keycloak authplane
 ```
 
 **Reading the diagram**
@@ -94,8 +103,12 @@ flowchart TB
 - Solid arrows are request-path (synchronous: PII redaction, cache, DB writes, S3 puts).
 - Dotted arrows are OTLP telemetry (asynchronous, fire-and-forget).
 - The **agentic app's only required outbound surfaces** are LiteLLM (LLM calls),
-  the MCP gateway (tools), and the OTel collector (telemetry). Everything
-  else is internal to the platform.
+  the MCP gateway (tools), the OTel collector (telemetry), and Keycloak (OIDC
+  login + token exchange). Everything else is internal to the platform.
+- **Keycloak is the IdP**: the browser logs in against the `agentic-dev` realm,
+  and the agent chain exchanges tokens client-to-client (see the
+  [chart README](deploy/helm/keycloak/README.md) for the realm's clients and
+  the `tenant` claim that scopes the FalkorDB graph).
 - **SeaweedFS is the S3 backend for everything**: MLflow artifacts, Tempo
   trace blocks, Loki chunks + index. One object store, four buckets.
 
@@ -114,14 +127,23 @@ services reachable on `localhost`, with the same credentials.
 | `kubectl` | — | required |
 | [Helm](https://helm.sh/) 3.15+ | — | required |
 | `aws` CLI | — | one-time bucket bootstrap |
+| [`kubeseal`](https://github.com/bitnami-labs/sealed-secrets) | — | only to (re)seal secrets (`--seal`), not for `--up` |
 
 All credentials default to dev-only values (`admin` / `password` / `any`).
-Override anything that matters via `.env` (Compose) or a Kubernetes Secret.
+On the Kubernetes path they are stored as **Sealed Secrets** (encrypted,
+committed to git, decrypted in-cluster by a controller); on Compose, admin
+passwords are file-based secrets under `secrets/compose/`. Real LLM provider
+keys never enter the kind cluster or git — see [docs/SECURITY.md](docs/SECURITY.md).
 
 ### Path A — Docker Compose (fast local loop)
 
 ```bash
-docker compose up -d                            # 14 services, ~60s to settle
+# Bootstrap file-based secrets (postgres/keycloak/grafana admin passwords).
+for f in postgres_password keycloak_admin_password grafana_admin_password; do
+  cp "secrets/compose/$f.example" "secrets/compose/$f"
+done
+
+docker compose up -d                            # 15 services, ~60s to settle
 docker compose ps                               # all should be healthy or "Up"
 ```
 
@@ -133,19 +155,19 @@ Try it:
 
 ```bash
 # Chat completion (no real provider needed — uses mock_response when keys are blank)
-curl -sS http://localhost:4000/v1/chat/completions \
+curl -sS http://localhost:14000/v1/chat/completions \
   -H "Authorization: Bearer sk-dev-master-key-change-me-not-a-secret" \
   -H "Content-Type: application/json" \
   -d '{"model":"claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}]}'
 
 # Grafana (admin / admin)
-open http://localhost:3001
+open http://localhost:13001
 
 # LiteLLM admin UI (admin / password)
-open http://localhost:4000/ui
+open http://localhost:14000/ui
 
 # MLflow
-open http://localhost:5000
+open http://localhost:15000
 ```
 
 Tear down:
@@ -183,11 +205,15 @@ provisioning a real cluster. All orchestration is wrapped in
 The script:
 
 - reuses an existing `agentic-platform` kind cluster if present
+- installs the **Sealed Secrets controller** into `kube-system` (adopting the
+  committed dev sealing key in `secrets/dev/`), then applies the committed
+  `SealedSecret`s in [deploy/sealed-secrets/](deploy/sealed-secrets/) — they
+  decrypt into the `platform-*` Secrets the charts consume (postgres, keycloak
+  admin, grafana admin, litellm masterkey, S3 creds)
 - runs `helm dependency update` + extracts subchart tarballs (Helm 3.21+
   requires deps unpacked into `charts/<name>/`, not just present as `.tgz`)
 - bootstraps SeaweedFS buckets as an in-cluster Job (no host `aws` CLI
-  needed), creates the `litellm` Postgres database, and creates the
-  `platform-litellm-secrets` Secret automatically
+  needed) and creates the `litellm` Postgres database
 - uses `helm upgrade --install` so re-running is safe
 
 Try it (run each port-forward in its own terminal):
@@ -205,6 +231,15 @@ kubectl -n agentic-platform port-forward svc/platform-mlflow  5000:5000
 # 1. Cluster + namespace
 kind create cluster --config deploy/kind/kind-config.yaml --name agentic-platform
 kubectl create namespace agentic-platform
+
+# 1b. Sealed Secrets: adopt the committed dev key, install the controller,
+#     then apply the committed SealedSecrets (they decrypt into platform-* Secrets).
+kubectl apply -f secrets/dev/sealed-secrets-dev-keypair.yaml
+helm -n kube-system upgrade --install sealed-secrets sealed-secrets \
+  --repo https://bitnami-labs.github.io/sealed-secrets --version 2.17.9 \
+  -f deploy/helm/sealed-secrets/values.yaml --wait
+kubectl -n kube-system rollout status deploy/sealed-secrets-controller
+kubectl apply -f deploy/sealed-secrets/
 
 # 2. For every chart with subchart deps: update + extract
 for c in seaweedfs tempo loki prometheus grafana otel-collector mlflow litellm; do
@@ -229,13 +264,10 @@ helm install platform-grafana        deploy/helm/grafana        -n agentic-platf
 helm install platform-otel-collector deploy/helm/otel-collector -n agentic-platform --wait --timeout 5m
 helm install platform-mlflow         deploy/helm/mlflow         -n agentic-platform --wait --timeout 8m
 
-# 6. Data plane
+# 6. Data plane (platform-litellm-secrets already exists from step 1b — its
+#    masterkey is sealed; the kind path is mock-only so no provider keys here)
 helm install platform-presidio    deploy/helm/presidio    -n agentic-platform --wait --timeout 5m
 helm install platform-obot         deploy/helm/obot         -n agentic-platform --wait --timeout 8m
-kubectl -n agentic-platform create secret generic platform-litellm-secrets \
-  --from-literal=masterkey="$(openssl rand -hex 32)" \
-  --from-literal=anthropic-api-key="${ANTHROPIC_API_KEY:-}" \
-  --from-literal=openai-api-key="${OPENAI_API_KEY:-}"
 helm install platform-litellm deploy/helm/litellm -n agentic-platform --wait --timeout 10m
 ```
 
@@ -249,6 +281,7 @@ helm install platform-litellm deploy/helm/litellm -n agentic-platform --wait --t
 | Infra | Redis | KV + JSON + Search (LangGraph checkpointer, LiteLLM cache) | `redis:latest` (Redis 8) | [deploy/helm/redis/](deploy/helm/redis/) |
 | Infra | Postgres | Relational store (LiteLLM usage, MLflow, LangGraph) | `postgres:latest` | [deploy/helm/postgres/](deploy/helm/postgres/) |
 | Infra | FalkorDB | Property-graph DB (GraphRAG) | `falkordb/falkordb:latest` | [deploy/helm/falkordb/](deploy/helm/falkordb/) |
+| Auth | Keycloak | OIDC IdP + token exchange for the agent chain (`agentic-dev` realm) | `quay.io/keycloak/keycloak:26.1` | [deploy/helm/keycloak/](deploy/helm/keycloak/) |
 | Data | LiteLLM | OpenAI-compatible LLM proxy + Presidio PII masking | `ghcr.io/berriai/litellm:main-stable` | [deploy/helm/litellm/](deploy/helm/litellm/) |
 | Data | Presidio (analyzer + anonymizer) | PII detection + redaction sidecars for LiteLLM | `mcr.microsoft.com/presidio-{analyzer,anonymizer}` | [deploy/helm/presidio/](deploy/helm/presidio/) |
 | Data | Obot | MCP gateway + registry + chat UI; deploys MCP servers as k8s workloads | `ghcr.io/obot-platform/obot:latest` | [deploy/helm/obot/](deploy/helm/obot/) |
@@ -261,25 +294,34 @@ helm install platform-litellm deploy/helm/litellm -n agentic-platform --wait --t
 
 ## Ports (host → container)
 
+Compose publishes every service on a **`1xxxx`** host port (the well-known
+port prefixed with `1`). This deliberately avoids the standard ports so the
+Compose stack and the kind port-forwards (which use the plain ports — `4000`,
+`5000`, `3000`…) can run side by side without clashing. Container ports are
+unchanged; this only affects what you type on `localhost`.
+
 | Host | Service | What it is |
 | ---: | --- | --- |
-| 9333 | seaweedfs | SeaweedFS master |
-| 8080 | seaweedfs | SeaweedFS volume |
-| 8888 | seaweedfs | SeaweedFS filer |
-| 8333 | seaweedfs | SeaweedFS S3 gateway |
-| 6379 | redis | Redis (RESP) |
-| 5432 | postgres | Postgres |
-| 6380 | falkordb | FalkorDB (RESP, graph) |
-| 3000 | falkordb | FalkorDB Browser UI |
-| 4000 | litellm | LiteLLM proxy + UI |
-| 8090 | obot | Obot MCP Gateway + UI (container port 8080) |
-| 5000 | mlflow | MLflow UI + API |
-| 4317 | otel-collector | OTLP gRPC |
-| 4318 | otel-collector | OTLP HTTP |
-| 3200 | tempo | Tempo query API |
-| 3100 | loki | Loki push + query API |
-| 9090 | prometheus | Prometheus UI + remote-write |
-| 3001 | grafana | Grafana UI (3000 is taken by falkordb) |
+| 19333 | seaweedfs | SeaweedFS master |
+| 19080 | seaweedfs | SeaweedFS volume (18080 taken by keycloak) |
+| 18888 | seaweedfs | SeaweedFS filer |
+| 18333 | seaweedfs | SeaweedFS S3 gateway |
+| 16379 | redis | Redis (RESP) |
+| 15432 | postgres | Postgres |
+| 16380 | falkordb | FalkorDB (RESP, graph) |
+| 13000 | falkordb | FalkorDB Browser UI |
+| 18080 | keycloak | Keycloak OIDC IdP |
+| 14000 | litellm | LiteLLM proxy + UI |
+| 18090 | obot | Obot MCP Gateway + UI (container port 8080) |
+| 15000 | mlflow | MLflow UI + API |
+| 14317 | otel-collector | OTLP gRPC |
+| 14318 | otel-collector | OTLP HTTP |
+| 18889 | otel-collector | Collector /metrics (container 8888) |
+| 13200 | tempo | Tempo query API |
+| 13100 | loki | Loki push + query API |
+| 19090 | prometheus | Prometheus UI + remote-write |
+| 13001 | grafana | Grafana UI (13000 taken by falkordb) |
+| 18080 | keycloak | Keycloak IdP — OIDC (Compose convention: host ports are `1xxxx`; the chart/k8s service uses 8080) |
 
 ## Config files
 
@@ -292,6 +334,7 @@ helm install platform-litellm deploy/helm/litellm -n agentic-platform --wait --t
 | [config/grafana/provisioning/](config/grafana/provisioning/) | volume mount | mirrored in [grafana/values.yaml](deploy/helm/grafana/values.yaml) | Datasources + dashboards |
 | [config/litellm/config.yaml](config/litellm/config.yaml) | volume mount | mirrored in [litellm/values.yaml](deploy/helm/litellm/values.yaml) | Model list + PII callback + cache |
 | [config/seaweedfs-init/buckets.sh](config/seaweedfs-init/buckets.sh) | run by `seaweedfs-init` service | document only (see below) | One-shot bucket bootstrap |
+| [deploy/helm/keycloak/realm-agentic-dev.json](deploy/helm/keycloak/realm-agentic-dev.json) | volume mount | configmap via `.Files.Get` | Keycloak `agentic-dev` realm: clients, scopes, token-exchange, demo users. Single source — both surfaces read the same file (not dual-stated). |
 
 > **Implication of the dual-config layout.** Configs live in two places by
 > design: `config/*` are bind-mounted into Compose containers; the same
@@ -311,13 +354,18 @@ see [.env.example](.env.example) for the full list with comments).
 | `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` | `postgres` / `password` / `mlflow` | Compose | Shared Postgres for LiteLLM + MLflow |
 | `S3_ACCESS_KEY` / `S3_SECRET_KEY` | `any` / `any` | Compose | Must match the identities in [config/seaweedfs/s3-identities.json](config/seaweedfs/s3-identities.json) |
 | `LITELLM_MASTER_KEY` | `sk-dev-master-key-change-me-not-a-secret` | Compose | Bearer token clients send to LiteLLM |
-| `LITELLM_UI_USERNAME` / `LITELLM_UI_PASSWORD` | `admin` / `password` | Compose | Admin UI login at `:4000/ui` |
-| `GRAFANA_ADMIN_PASSWORD` | `admin` | Compose | Grafana admin password at `:3001` |
-| `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` | empty | Compose | Upstream provider keys; leave blank to use `mock_response` |
+| `LITELLM_UI_USERNAME` / `LITELLM_UI_PASSWORD` | `admin` / `password` | Compose | Admin UI login at `:14000/ui` |
+| `KEYCLOAK_ADMIN_USERNAME` | `admin` | Compose | Keycloak bootstrap admin user at `:18080` |
+| `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` | empty | Compose | Upstream provider keys; leave blank to use `mock_response`. Local-only — never enter the kind cluster |
 
-For Helm, credentials go into a Kubernetes Secret instead of `.env` — see
-[deploy/helm/litellm/README.md](deploy/helm/litellm/README.md) and
-[deploy/helm/grafana/values.yaml](deploy/helm/grafana/values.yaml).
+The **keycloak** and **grafana** admin passwords (and the Postgres server
+password) are no longer env vars — they are file-based secrets under
+`secrets/compose/` (copy the `*.example` files to bootstrap). See
+[docs/SECURITY.md](docs/SECURITY.md).
+
+For Helm, credentials are **Sealed Secrets** (encrypted, committed, decrypted
+in-cluster) — see [docs/SECURITY.md](docs/SECURITY.md) and
+[deploy/sealed-secrets/](deploy/sealed-secrets/).
 
 ## Chart-level READMEs
 
@@ -328,6 +376,9 @@ Each Helm chart has its own README with prerequisites and per-service options:
 - [Redis](deploy/helm/redis/README.md)
 - [Postgres](deploy/helm/postgres/README.md)
 - [FalkorDB](deploy/helm/falkordb/README.md)
+
+**Auth**
+- [Keycloak](deploy/helm/keycloak/README.md)
 
 **Data**
 - [LiteLLM](deploy/helm/litellm/README.md)
@@ -358,6 +409,7 @@ changes  (detect which charts changed)
    ├─► redis               │  Layer 0 — no chart deps. Parallel.
    ├─► postgres            │
    ├─► falkordb            │
+   ├─► keycloak            │
    ├─► presidio            │
    ├─► obot                │
    ├─► prometheus          │
@@ -373,6 +425,10 @@ changes  (detect which charts changed)
                            │            presidio + otel-collector.
         ↓
    └─► e2e (full stack)    │  Skipped if any chart above failed.
+        ↓
+   └─► gate                │  Always runs; the single required check
+                           │  for branch protection. Red if any job
+                           │  failed or was cancelled.
 ```
 
 If a layer-0 chart (e.g. `seaweedfs`) fails, its layer-1+ dependents

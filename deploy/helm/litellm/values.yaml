@@ -114,3 +114,17 @@ resources:
     # LiteLLM proxy itself takes ~1.5Gi resident on startup; 1Gi gets it
     # OOM-killed before the readiness probe can succeed.
     memory: 3Gi
+
+# The Prisma schema-migration Job. Upstream leaves this BestEffort
+# (resources: {}), so during a full `deploy.sh --up` — when every chart
+# installs at once and the node is briefly memory-contended — the kernel
+# OOM-killer evicts it first (exitCode 137 / OOMKilled). A memory request
+# lifts it to Burstable QoS (no longer first victim, reserved headroom); the
+# limit gives `prisma migrate`/`generate` room to spike.
+migrationJob:
+  resources:
+    requests:
+      cpu: 100m
+      memory: 512Mi
+    limits:
+      memory: 2Gi

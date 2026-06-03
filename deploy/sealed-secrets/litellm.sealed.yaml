@@ -1,0 +1,13 @@
+---
+apiVersion: bitnami.com/v1alpha1
+kind: SealedSecret
+metadata:
+  name: platform-litellm-secrets
+  namespace: agentic-platform
+spec:
+  encryptedData:
+    masterkey: AgBLnnYl3Ho2R+d9d2qgPHn11wIJsZES99nTlo35HvnvKHW0QVFrmtO5jL5J/1UdUrb+3fY26sDOcVLXtBcNcbrY8lGr5hfVSKqo3RgNDfl7aDz9iIGnRwK2rPGg3rfwZxzdVEuRdPIHRarFMDRGjSR5dEbKADhHCQEA6YfA55zTBiLM3j8ELtDaLbWALTwieSkp/BnrSIqceiXS8OKideFuAUAUViIoBsYzkrbOaW35gZfdk0NakV+vWUuSQ44fgFcyEAd0NmN9kcEUo1QH8TuAffQnnDLnut8qno1f35vouSumHdYPHH5o1JiKzVZ5Ikq2LjUPoTCZlkDp9rRt7PmpTt8EKt0oaXA1Ap+Wbq2xxZCxRM1ikETeeNchtVEcREoPn/PtntwwZ5RedvO3Mhe9kOzqmqpXe0wnftMpDNZR1HPgyAn4REm9iWOkqxc6RzQGgniIbLD4OXAXkDjMw/QhCBkOknjHWrO/KJjFv7X8lhvFo6kVrhgtykcuUCVj2cHdyHvjxT63X42Jk+p4ti0klbUR7zjhytzDpGXf0FC/9zz+iqDPkeRQYuGc+f5EKup1LON2Un0x0NHmMbbs1+taVMlKjVnMDAzpslqvbVYrZefD8JfMWxHacQ2c2XHmYYTL3FGvJK8xn5XquBq9M/tvufcqIjVoCZQ4RuktQdajZhI+g3548YU+ebMgU4jbD6+ytflrcxK5LbzT5pDWa6rhzYqWQ+jcF7ZouV3bWsuXykWC/+NmwrLd
+  template:
+    metadata:
+      name: platform-litellm-secrets
+      namespace: agentic-platform

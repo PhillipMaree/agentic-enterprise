@@ -1,0 +1,33 @@
+image:
+  repository: quay.io/keycloak/keycloak
+  tag: "26.1"
+  pullPolicy: IfNotPresent
+
+service:
+  # ClusterIP by default — matches the rest of the platform (access via
+  # port-forward). A LoadBalancer hangs `helm --wait` on a plain kind cluster
+  # (no LB provider → external IP stays <pending> → install times out), which
+  # breaks deploy.sh and CI. For browser PKCE via cloud-provider-kind, opt in
+  # with `--set service.type=LoadBalancer` and set `hostname` to the external URL.
+  type: ClusterIP
+  port: 8080
+
+# Admin bootstrap creds are pulled from an existing Secret (decrypted from
+# deploy/sealed-secrets/keycloak.sealed.yaml), not stored here in plaintext.
+admin:
+  existingSecret: platform-keycloak-admin
+  usernameKey: username
+  passwordKey: password
+
+# Public issuer hostname (browser-reachable). Override to the cloud-provider-kind
+# external URL. In-cluster validators also use this string, so it must resolve
+# both ways (or rely on KC_HOSTNAME_STRICT=false for dev).
+hostname: http://platform-keycloak:8080
+
+resources:
+  requests:
+    cpu: 200m
+    memory: 512Mi
+  limits:
+    cpu: "2"
+    memory: 1536Mi

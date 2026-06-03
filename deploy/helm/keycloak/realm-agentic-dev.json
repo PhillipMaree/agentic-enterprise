@@ -1,0 +1,121 @@
+{
+  "realm": "agentic-dev",
+  "enabled": true,
+  "sslRequired": "none",
+  "accessTokenLifespan": 1800,
+  "registrationAllowed": false,
+  "clientScopes": [
+    {
+      "name": "tenant",
+      "description": "Tenant claim from the user's tenant attribute",
+      "protocol": "openid-connect",
+      "attributes": { "include.in.token.scope": "true", "display.on.consent.screen": "false" },
+      "protocolMappers": [
+        {
+          "name": "tenant",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "config": {
+            "user.attribute": "tenant",
+            "claim.name": "tenant",
+            "jsonType.label": "String",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true",
+            "multivalued": "false"
+          }
+        }
+      ]
+    },
+    { "name": "building:read", "protocol": "openid-connect", "attributes": { "include.in.token.scope": "true", "display.on.consent.screen": "false" } },
+    { "name": "agent:invoke:orchestrator", "protocol": "openid-connect", "attributes": { "include.in.token.scope": "true", "display.on.consent.screen": "false" } },
+    { "name": "agent:invoke:discovery", "protocol": "openid-connect", "attributes": { "include.in.token.scope": "true", "display.on.consent.screen": "false" } }
+  ],
+  "clients": [
+    {
+      "clientId": "proptech-frontend",
+      "name": "PropTech Frontend (public/PKCE via server-side Auth.js)",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "secret": "proptech-frontend-secret",
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": ["http://localhost:8000/*", "http://localhost:3000/*", "http://proptech.localtest.me/*"],
+      "webOrigins": ["+"],
+      "attributes": { "pkce.code.challenge.method": "S256" },
+      "defaultClientScopes": ["web-origins", "profile", "roles", "email", "tenant", "building:read", "agent:invoke:orchestrator", "agent:invoke:discovery"],
+      "protocolMappers": [
+        {
+          "name": "aud-orchestrator",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": { "included.client.audience": "agent-orchestrator", "access.token.claim": "true", "id.token.claim": "false" }
+        }
+      ]
+    },
+    {
+      "clientId": "agent-orchestrator",
+      "name": "Orchestrator Agent",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "secret": "agent-orchestrator-secret",
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "fullScopeAllowed": true,
+      "attributes": { "standard.token.exchange.enabled": "true" },
+      "defaultClientScopes": ["roles", "tenant", "building:read", "agent:invoke:discovery"]
+    },
+    {
+      "clientId": "agent-discovery",
+      "name": "Building Discovery Agent",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "secret": "agent-discovery-secret",
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "fullScopeAllowed": true,
+      "attributes": { "standard.token.exchange.enabled": "true" },
+      "defaultClientScopes": ["roles", "tenant", "building:read"]
+    },
+    {
+      "clientId": "mcp-proptech",
+      "name": "PropTech MCP Server (resource server)",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "secret": "mcp-proptech-secret",
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "fullScopeAllowed": true
+    }
+  ],
+  "users": [
+    {
+      "username": "alice",
+      "enabled": true,
+      "email": "alice@acme.example",
+      "emailVerified": true,
+      "firstName": "Alice",
+      "lastName": "Acme",
+      "attributes": { "tenant": ["acme"] },
+      "credentials": [{ "type": "password", "value": "password", "temporary": false }]
+    },
+    {
+      "username": "bob",
+      "enabled": true,
+      "email": "bob@globex.example",
+      "emailVerified": true,
+      "firstName": "Bob",
+      "lastName": "Globex",
+      "attributes": { "tenant": ["globex"] },
+      "credentials": [{ "type": "password", "value": "password", "temporary": false }]
+    }
+  ]
+}

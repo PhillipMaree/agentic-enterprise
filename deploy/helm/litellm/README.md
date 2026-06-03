@@ -15,13 +15,11 @@ hitting the upstream provider.
   kubectl -n agentic-platform exec deploy/platform-postgres -- \
     psql -U postgres -c "CREATE DATABASE litellm"
   ```
-- Secret with master key + provider keys:
-  ```bash
-  kubectl -n agentic-platform create secret generic platform-litellm-secrets \
-    --from-literal=masterkey="$(openssl rand -hex 32)" \
-    --from-literal=anthropic-api-key="$ANTHROPIC_API_KEY" \
-    --from-literal=openai-api-key="$OPENAI_API_KEY"
-  ```
+- `platform-litellm-secrets` (key `masterkey`) — decrypted from the committed
+  SealedSecret [deploy/sealed-secrets/litellm.sealed.yaml](../../sealed-secrets/litellm.sealed.yaml)
+  by the Sealed Secrets controller (`deploy.sh` does this automatically). The
+  kind path is **mock-only**, so no provider keys live in the cluster — real
+  Anthropic/OpenAI keys are prod-only. See [docs/SECURITY.md](../../../docs/SECURITY.md).
 
 ## Install
 
@@ -44,5 +42,6 @@ kubectl -n agentic-platform port-forward svc/platform-litellm 4000:4000
 
 ```bash
 helm uninstall platform-litellm -n agentic-platform
-kubectl -n agentic-platform delete secret platform-litellm-secrets
+# platform-litellm-secrets is owned by its SealedSecret; remove both if desired:
+kubectl -n agentic-platform delete sealedsecret,secret platform-litellm-secrets
 ```

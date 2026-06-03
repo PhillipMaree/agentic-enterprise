@@ -1,0 +1,6 @@
+apiVersion: v2
+name: platform-keycloak
+description: Keycloak IdP for the agentic-platform namespace (dev mode, imports the agentic-dev realm).
+type: application
+version: 0.1.0
+appVersion: "26.1"

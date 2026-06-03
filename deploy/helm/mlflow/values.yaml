@@ -31,8 +31,17 @@ artifactRoot:
   s3:
     enabled: true
     bucket: mlflow-artifacts
-    awsAccessKeyId: any
-    awsSecretAccessKey: any
+    # Left empty on purpose: AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY are
+    # injected from the platform-s3-creds Secret via extraSecretNamesForEnvFrom
+    # below (decrypted from deploy/sealed-secrets/s3.sealed.yaml). The chart
+    # only bakes these into its own Secret when both are non-empty.
+    awsAccessKeyId: ""
+    awsSecretAccessKey: ""
+
+# envFrom the S3 credentials Secret — supplies AWS_ACCESS_KEY_ID,
+# AWS_SECRET_ACCESS_KEY (and harmless AWS_DEFAULT_REGION/S3_ENDPOINT_URL).
+extraSecretNamesForEnvFrom:
+  - platform-s3-creds
 
 extraEnvVars:
   MLFLOW_S3_ENDPOINT_URL: http://platform-seaweedfs-all-in-one:8333

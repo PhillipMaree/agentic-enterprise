@@ -27,8 +27,10 @@ loki:
       admin: loki-logs
     s3:
       endpoint: platform-seaweedfs-all-in-one:8333
-      accessKeyId: any
-      secretAccessKey: any
+      # accessKeyId/secretAccessKey omitted — injected as
+      # AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY from platform-s3-creds via
+      # singleBinary.extraEnvFrom (see below); Loki's S3 client uses the AWS
+      # credential chain (env) when static keys are absent.
       s3ForcePathStyle: true
       insecure: true
   limits_config:
@@ -43,6 +45,11 @@ loki:
 
 singleBinary:
   replicas: 1
+  # Inject S3 credentials (AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY) from the
+  # platform-s3-creds Secret, decrypted from deploy/sealed-secrets/s3.sealed.yaml.
+  extraEnvFrom:
+    - secretRef:
+        name: platform-s3-creds
   persistence:
     enabled: true
     size: 1Gi
