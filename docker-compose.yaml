@@ -410,7 +410,10 @@ services:
       - network_bridge
 
   grafana:
-    image: grafana/grafana:latest
+    # Pinned (not :latest): newer Grafana ships the experimental k8s dashboard
+    # apiserver / unified storage default-on, which has no backend here and
+    # hangs requests (context-deadline-exceeded), making login take minutes.
+    image: grafana/grafana:11.6.3
     container_name: grafana
     hostname: grafana
     restart: unless-stopped

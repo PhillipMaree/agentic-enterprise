@@ -119,6 +119,57 @@ flowchart TB
   to all users; flip auth on to scope discovery per identity. See the
   [chart README](deploy/helm/obot/README.md).
 
+## Tenant attribution
+
+Usage is partitioned per tenant so one dashboard can break LLM and MCP
+consumption down by the agentic client that drove it. Telemetry can only be
+sliced by a label it actually carries, so the **client is responsible for
+stamping its tenant onto every call** — nothing reads the JWT and labels
+metrics for you. The tenant identity originates as the Keycloak `tenant`
+claim (the same one that scopes the FalkorDB graph); the client reads it from
+its token and forwards it on two surfaces.
+
+**LLM usage → LiteLLM team.** Tenant maps to a LiteLLM *team*: the client
+calls LiteLLM with a team-scoped virtual key, and LiteLLM automatically tags
+its Prometheus metrics with `team` / `team_alias`. Provision once per tenant
+(via the admin UI at `:14000/ui` or the API):
+
+```bash
+# 1. a team per tenant
+curl -sS http://localhost:14000/team/new \
+  -H "Authorization: Bearer $LITELLM_MASTER_KEY" -H 'Content-Type: application/json' \
+  -d '{"team_alias":"acme"}'                          # -> returns team_id
+
+# 2. a virtual key bound to that team
+curl -sS http://localhost:14000/key/generate \
+  -H "Authorization: Bearer $LITELLM_MASTER_KEY" -H 'Content-Type: application/json' \
+  -d '{"team_id":"<team_id>"}'                         # -> returns sk-... key
+```
+
+The client then sends chat completions with `Authorization: Bearer sk-...`
+(the per-tenant key) instead of the master key. No per-request work — the
+`team` label rides on every usage metric.
+
+**MCP usage → `tenant` telemetry attribute.** MCP tool calls have no native
+per-tenant metric, so the client's OpenTelemetry SDK must carry the tenant on
+its spans. The simplest mechanism is a resource attribute set once at startup:
+
+```bash
+OTEL_RESOURCE_ATTRIBUTES=tenant=acme,service.name=my-agent
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:14318    # the OTel collector (HTTP)
+```
+
+(or set `tenant` as a span attribute on each tool-call span). The OTel
+Collector's [`spanmetrics` connector](config/otel-collector/config.yaml)
+derives request/error/latency metrics from those spans with `tenant` as a
+dimension, so MCP usage lands in Prometheus alongside the LLM metrics.
+
+Both feed the **Agentic Usage Overview** dashboard
+([config/grafana/provisioning/dashboards/agentic-usage-overview.json](config/grafana/provisioning/dashboards/agentic-usage-overview.json)),
+whose `$tenant` variable (sourced from the `team` label) filters every panel.
+This is a *visual* partition — anyone with Grafana access can switch tenants;
+it is not data-path isolation.
+
 ## Getting Started
 
 Two ways to run the stack locally. Pick one. Both end with the same set of
@@ -167,7 +218,7 @@ curl -sS http://localhost:14000/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{"model":"claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}]}'
 
-# Grafana (admin / admin)
+# Grafana (admin / password)
 open http://localhost:13001
 
 # LiteLLM admin UI (admin / password)

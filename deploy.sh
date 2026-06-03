@@ -229,7 +229,13 @@ install_chart() {
         "${overlay_files[@]}" \
         --wait --timeout 10m
     fi
-    return $?
+    local rc=$?
+
+    # Post-install hooks for direct charts.
+    case "$chart" in
+      grafana) apply_grafana_dashboards ;;
+    esac
+    return $rc
   fi
 
   # Local-only chart (hand-written or umbrella with no transitive deps).
@@ -316,6 +322,25 @@ bootstrap_litellm_db() {
       psql -U postgres -c "CREATE DATABASE litellm"
     ok "litellm database created"
   fi
+}
+
+# Load the provisioned Grafana dashboards into the cluster as ConfigMaps the
+# grafana sidecar picks up (label grafana_dashboard=1). Single source of truth:
+# the same JSON files the Compose path bind-mounts from config/grafana/... — no
+# second copy in values.yaml. Idempotent (apply + label --overwrite).
+apply_grafana_dashboards() {
+  local dash_dir="config/grafana/provisioning/dashboards"
+  local found=0
+  for json in "$dash_dir"/*.json; do
+    [ -f "$json" ] || continue
+    found=1
+    local base; base="$(basename "$json" .json)"
+    local cm="platform-grafana-dashboard-${base}"
+    kubectl -n "$NS" create configmap "$cm" --from-file="$json" \
+      --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+    kubectl -n "$NS" label configmap "$cm" grafana_dashboard=1 --overwrite >/dev/null
+  done
+  [ "$found" = 1 ] && ok "Grafana dashboards provisioned from $dash_dir/*.json (sidecar ConfigMaps)"
 }
 
 # ---------- sealed secrets ------------------------------------------------

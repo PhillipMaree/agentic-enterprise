@@ -3,6 +3,13 @@
 #
 # Admin creds come from the platform-grafana-admin Secret (decrypted from
 # deploy/sealed-secrets/grafana.sealed.yaml), not inline values.
+# Pinned (not the chart default / :latest): newer Grafana ships the
+# experimental k8s dashboard apiserver + unified storage default-on, which
+# has no backend in this stack and hangs requests, making login take minutes.
+# Mirrors the pin in docker-compose.yaml.
+image:
+  tag: "11.6.3"
+
 admin:
   existingSecret: platform-grafana-admin
   userKey: admin-user
