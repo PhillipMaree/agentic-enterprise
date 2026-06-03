@@ -34,7 +34,7 @@ flowchart TB
     subgraph data [Data plane]
         direction LR
         litellm[LiteLLM proxy :4000]
-        mcp[Obot MCP Gateway :8090]
+        mcp[Obot MCP Gateway + Registry :8080]
         presidio_a[Presidio analyzer]
         presidio_o[Presidio anonymizer]
     end
@@ -111,6 +111,13 @@ flowchart TB
   the `tenant` claim that scopes the FalkorDB graph).
 - **SeaweedFS is the S3 backend for everything**: MLflow artifacts, Tempo
   trace blocks, Loki chunks + index. One object store, four buckets.
+- **Obot is both a tool gateway and a registry**: alongside proxying tool
+  calls it serves a read-only, MCP-spec registry API at `/v0.1/servers`
+  (cursor-paginated, `search`/`limit` query params) so clients can discover
+  the MCP servers it manages. Dev runs in **no-auth mode**
+  (`OBOT_SERVER_AUTH_REGISTRY_REQUIRE_AUTH=false`), exposing servers granted
+  to all users; flip auth on to scope discovery per identity. See the
+  [chart README](deploy/helm/obot/README.md).
 
 ## Getting Started
 
@@ -312,7 +319,7 @@ unchanged; this only affects what you type on `localhost`.
 | 13000 | falkordb | FalkorDB Browser UI |
 | 18080 | keycloak | Keycloak OIDC IdP |
 | 14000 | litellm | LiteLLM proxy + UI |
-| 18090 | obot | Obot MCP Gateway + UI (container port 8080) |
+| 18090 | obot | Obot MCP Gateway + Registry + UI (container port 8080) |
 | 15000 | mlflow | MLflow UI + API |
 | 14317 | otel-collector | OTLP gRPC |
 | 14318 | otel-collector | OTLP HTTP |
@@ -321,7 +328,6 @@ unchanged; this only affects what you type on `localhost`.
 | 13100 | loki | Loki push + query API |
 | 19090 | prometheus | Prometheus UI + remote-write |
 | 13001 | grafana | Grafana UI (13000 taken by falkordb) |
-| 18080 | keycloak | Keycloak IdP — OIDC (Compose convention: host ports are `1xxxx`; the chart/k8s service uses 8080) |
 
 ## Config files
 
