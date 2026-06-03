@@ -43,6 +43,10 @@ proxy_config:
       litellm_params:
         model: anthropic/claude-sonnet-4-6
         api_key: os.environ/ANTHROPIC_API_KEY
+    - model_name: claude-opus-4-8
+      litellm_params:
+        model: anthropic/claude-opus-4-8
+        api_key: os.environ/ANTHROPIC_API_KEY
     - model_name: claude-opus-4-7
       litellm_params:
         model: anthropic/claude-opus-4-7
@@ -51,6 +55,14 @@ proxy_config:
       litellm_params:
         model: anthropic/claude-haiku-4-5-20251001
         api_key: os.environ/ANTHROPIC_API_KEY
+    - model_name: gpt-5.5
+      litellm_params:
+        model: openai/gpt-5.5
+        api_key: os.environ/OPENAI_API_KEY
+    - model_name: gpt-5
+      litellm_params:
+        model: openai/gpt-5
+        api_key: os.environ/OPENAI_API_KEY
     - model_name: gpt-4o
       litellm_params:
         model: openai/gpt-4o
