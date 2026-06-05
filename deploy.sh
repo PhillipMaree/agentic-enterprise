@@ -507,13 +507,21 @@ usage() {
   exit 1
 }
 
-[ $# -lt 1 ] && usage
+# Only dispatch when EXECUTED directly. When this file is *sourced* (by
+# scripts/deploy-prod.sh, which reuses the chart definitions + install
+# functions below for the k3s/prod path) BASH_SOURCE[0] != $0, so the CLI
+# parsing is skipped and nothing runs on source. This keeps deploy.sh the
+# kind/dev path while letting the prod script share its logic without
+# duplicating it.
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+  [ $# -lt 1 ] && usage
 
-case "$1" in
-  --up)     shift; cmd_up   "${1:-}";;
-  --down)   shift; cmd_down "${1:-}";;
-  --status) shift; cmd_status;;
-  --seal)   shift; cmd_seal "$@";;
-  -h|--help) usage;;
-  *) usage;;
-esac
+  case "$1" in
+    --up)     shift; cmd_up   "${1:-}";;
+    --down)   shift; cmd_down "${1:-}";;
+    --status) shift; cmd_status;;
+    --seal)   shift; cmd_seal "$@";;
+    -h|--help) usage;;
+    *) usage;;
+  esac
+fi

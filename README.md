@@ -518,3 +518,98 @@ without hitting Anthropic/OpenAI. No repo secrets needed.
 drive a chat completion through LiteLLM (mock model), then verify
 the resulting metrics arrived in Prometheus. Catches cross-chart
 regressions that per-chart tests can't.
+
+## Production deploy
+
+[ci-and-deploy.yaml](.github/workflows/ci-and-deploy.yaml) handles the
+PR-validation-then-promote flow against the remote **k3s** cluster. It is
+separate from [deploy.yaml](.github/workflows/deploy.yaml) (the per-chart
+kind matrix above) because GitHub Actions can only gate a deploy on a
+`needs:` job in the **same** workflow.
+
+- **Pull requests to `main` run kind-based CI only.** The `build-test` job
+  spins up a fresh ephemeral kind cluster, runs `./deploy.sh --up` (full
+  stack, mock LLM models) and the e2e smoke test. It **never** touches
+  production.
+- **Merging to `main` triggers a production deploy over Tailscale.** On
+  `push` to `main` the same `build-test` job runs, and only if it passes does
+  `deploy-prod` run. `workflow_dispatch` runs `build-test` for manual
+  re-validation but never deploys (deploy-prod is gated on `push` to `main`).
+- **The GitHub runner joins Tailscale temporarily.** `deploy-prod` brings up
+  a short-lived, OAuth-authenticated `tag:ci` node via
+  [`tailscale/github-action@v4`](https://github.com/tailscale/github-action).
+  The node is torn down when the job ends.
+- **Deployment happens by SSH into the k3s VM.** Over the tailnet the runner
+  SSHes to the VM, pins the host key with `ssh-keyscan` (StrictHostKeyChecking
+  stays on), checks out the **exact commit SHA that passed `build-test`**
+  (`git fetch` → `checkout` → `reset --hard` to `${{ github.sha }}` — not
+  "latest main"), and runs the deploy **locally on the VM**. The Kubernetes
+  API is never exposed publicly — it is reachable only over Tailscale + SSH.
+
+### Two deploy scripts: dev (kind) vs prod (k3s)
+
+The prod deploy script is **separate** from the kind deploy script:
+
+- [`deploy.sh`](deploy.sh) — the **kind/dev + CI** path. Creates (or reuses) a
+  kind cluster, switches to its `kind-<name>` context, applies the **dev**
+  sealing key, and installs the full stack. Used locally and by both CI
+  workflows.
+- [`scripts/deploy-prod.sh`](scripts/deploy-prod.sh) — the **k3s/prod** path,
+  run on the VM by `deploy-prod`. It **sources** `deploy.sh` to reuse the exact
+  same chart catalog and `helm upgrade --install` logic (so the two can't
+  drift), but it **never creates a kind cluster or switches context** — it
+  refuses to run if the current context is `kind-*`, verifies reachability with
+  `kubectl get nodes`, and uses **prod** SealedSecrets/cert material from
+  `secrets/prod/` rather than the dev key. It is idempotent (every chart goes
+  in via `helm upgrade --install`).
+
+> **Prod SealedSecrets.** `deploy-prod.sh` assumes the Sealed Secrets
+> controller and its **prod private key** are already installed on the k3s
+> cluster (managed out of band — never committed; auto-installing would mint a
+> new key and orphan existing secrets). It applies prod-sealed SealedSecrets
+> from `deploy/sealed-secrets/prod/` if present. The committed SealedSecrets in
+> `deploy/sealed-secrets/` are **dev-sealed** and will not decrypt in prod —
+> seal prod copies with the prod cert and commit them there:
+> `./deploy.sh --seal --env prod <name> <out.yaml> --from-literal=k=v`.
+
+### Required GitHub secrets
+
+| Secret | Purpose |
+| --- | --- |
+| `PROD_HOST` | VM tailnet address (e.g. `100.x.y.z`) |
+| `PROD_USER` | SSH user on the VM |
+| `PROD_SSH_KEY` | Private SSH key for that user (written to a `0600` file, never echoed) |
+| `TS_OAUTH_CLIENT_ID` | Tailscale OAuth client id for the ephemeral `tag:ci` node |
+| `TS_OAUTH_SECRET` | Tailscale OAuth client secret |
+
+### VM repo access
+
+`deploy-prod` runs `git fetch` / `checkout` / `reset --hard` in `APP_DIR` on
+the VM (default `/opt/agentic-platform`). The workflow deliberately does **not**
+embed any token in the SSH script. The VM must already be able to reach this
+private repo by one of:
+
+- **a)** an existing checkout at `APP_DIR` whose `origin` is authenticated
+  (the deploy step then just fetches/resets — no clone), or
+- **b)** a deploy key configured on the VM (e.g. an SSH deploy key in
+  `~/.ssh` for `ubuntu-vm-server`), letting the initial `git clone` succeed.
+
+> **TODO — VM repo access.** Confirm `APP_DIR` and provision (a) or (b) on the
+> VM before the first prod deploy. Until then the `git clone`/`fetch` step will
+> fail for a private repo.
+
+### Recommended branch protection
+
+Protect `main` so the production deploy can only ever run on a validated
+commit: require the `build-test` check (from `CI and deploy`) to pass before
+merge. Optionally add a required reviewer to the **production** GitHub
+Environment for a manual approval gate before `deploy-prod` runs.
+
+> **Note — redundant kind validation on push to `main`.** `deploy.yaml` (the
+> per-chart kind matrix and the required `gate` check) still triggers on push
+> to **any** branch, so a merge to `main` currently runs kind validation twice:
+> once via `deploy.yaml`'s jobs and once via this workflow's `build-test`. This
+> is intentional for now — `deploy.yaml` remains the branch-protection gate and
+> is left untouched. If the duplication is unwanted, narrow `deploy.yaml`'s
+> trigger (e.g. exclude `main`, or restrict paths) rather than removing the
+> gate.
