@@ -96,6 +96,20 @@ masterkeySecretName: platform-litellm-secrets
 masterkeySecretKey: masterkey
 
 extraEnvVars:
+  # Stop the PROXY from running `prisma migrate deploy` on startup. The
+  # migrationJob (made a Helm pre-install/pre-upgrade hook below) is the single
+  # migrator and runs to completion BEFORE the proxy starts; with the old
+  # concurrent setup the two raced and deadlocked on Postgres advisory locks
+  # ("deadlock detected ... ApplyMigrations"), stalling readiness and flaking
+  # the e2e smoke. The proxy ships a pre-generated Prisma client, so it only
+  # needs the schema to already exist — the hook Job guarantees that.
+  #
+  # Note: the chart appends extraEnvVars to BOTH the proxy and the migration
+  # Job, but the Job template force-appends `DISABLE_SCHEMA_UPDATE=false` as its
+  # LAST env entry to always migrate, so this only takes effect on the proxy.
+  # (The Job logs a harmless duplicate-env warning as a result.)
+  - name: DISABLE_SCHEMA_UPDATE
+    value: "true"
   - name: PRESIDIO_ANALYZER_API_BASE
     value: http://platform-presidio-analyzer:3000
   - name: PRESIDIO_ANONYMIZER_API_BASE
@@ -134,6 +148,17 @@ resources:
 # lifts it to Burstable QoS (no longer first victim, reserved headroom); the
 # limit gives `prisma migrate`/`generate` room to spike.
 migrationJob:
+  # Run the migration as a Helm pre-install/pre-upgrade hook so it completes
+  # BEFORE the proxy Deployment is applied. The chart's default ordering hint
+  # is an ArgoCD PreSync hook (hooks.argocd) — but we deploy with Helm, which
+  # ignores that annotation, so by default the Job runs CONCURRENTLY with the
+  # proxy and both race to migrate (see DISABLE_SCHEMA_UPDATE above). Switching
+  # to the Helm hook serialises it: migrate to completion, then start the proxy.
+  hooks:
+    helm:
+      enabled: true
+    argocd:
+      enabled: false
   resources:
     requests:
       cpu: 100m
