@@ -454,14 +454,14 @@ Each Helm chart has its own README with prerequisites and per-service options:
 
 ## CI
 
-**One workflow per push**, with parallel chart-deploy jobs inside it.
-[deploy.yaml](.github/workflows/deploy.yaml) is the only trigger
-workflow; it computes which charts changed using
-[`dorny/paths-filter`](https://github.com/dorny/paths-filter), then
-chains chart jobs in **dependency order**:
+**One workflow per push** that builds **every service** in dependency
+layers — parallel where independent.
+[deploy.yaml](.github/workflows/deploy.yaml) is the trigger workflow; on
+every push it runs all chart jobs (no paths-filter — the whole stack is
+built each time), ordered only by their hard dependencies:
 
 ```text
-changes  (detect which charts changed)
+changes  (always: build every service)
    ├─► seaweedfs           ┐
    ├─► redis               │  Layer 0 — no chart deps. Parallel.
    ├─► postgres            │
@@ -481,18 +481,20 @@ changes  (detect which charts changed)
    └─► litellm             │  Layer 3 — needs postgres + redis +
                            │            presidio + otel-collector.
         ↓
-   └─► e2e (full stack)    │  Skipped if any chart above failed.
+   └─► e2e (full stack)    │  Runs once every service is up.
         ↓
-   └─► gate                │  Always runs; the single required check
-                           │  for branch protection. Red if any job
-                           │  failed or was cancelled.
+   └─► gate                │  The single required check for branch
+                           │  protection. Green only if every job
+                           │  above passed.
 ```
 
-If a layer-0 chart (e.g. `seaweedfs`) fails, its layer-1+ dependents
-(`tempo`, `loki`, `mlflow`, `e2e`) skip via `needs:` chains. Layer-0
-charts are independent of each other — `falkordb` failing doesn't
-affect `redis`. Click into the run on github.com to see every job's
-status in one graph.
+**No fail-fast.** A service that fails its smoke test shows red on its own;
+sibling jobs still run to completion, so one failure no longer cancels the
+others — you see the full per-service result in a single graph. A dependent
+(e.g. `tempo`) skips only when a dependency it actually needs (`seaweedfs`)
+failed. The **`gate`** job aggregates the lot and is red if any job failed;
+`gate` is the **only required status check** on `main`, so a merge is allowed
+exactly when the whole stack is green.
 
 **Each chart job** calls the reusable
 [`_deploy-chart.yaml`](.github/workflows/_deploy-chart.yaml), which:
@@ -521,29 +523,28 @@ regressions that per-chart tests can't.
 
 ## Production deploy
 
-[ci-and-deploy.yaml](.github/workflows/ci-and-deploy.yaml) handles the
-PR-validation-then-promote flow against the remote **k3s** cluster. It is
-separate from [deploy.yaml](.github/workflows/deploy.yaml) (the per-chart
-kind matrix above) because GitHub Actions can only gate a deploy on a
-`needs:` job in the **same** workflow.
+[ci-and-deploy.yaml](.github/workflows/ci-and-deploy.yaml) promotes a validated
+commit to the remote **k3s** cluster. Validation itself lives in
+[deploy.yaml](.github/workflows/deploy.yaml) (the build-all flow + `gate`); this
+workflow is wired to it with a `workflow_run` trigger, so it only ever deploys a
+commit that already went green.
 
-- **Pull requests to `main` run kind-based CI only.** The `build-test` job
-  spins up a fresh ephemeral kind cluster, runs `./deploy.sh --up` (full
-  stack, mock LLM models) and the e2e smoke test. It **never** touches
-  production.
-- **Merging to `main` triggers a production deploy over Tailscale.** On
-  `push` to `main` the same `build-test` job runs, and only if it passes does
-  `deploy-prod` run. `workflow_dispatch` runs `build-test` for manual
-  re-validation but never deploys (deploy-prod is gated on `push` to `main`).
+- **Validation and promotion are separate workflows.** `deploy.yaml` builds and
+  smoke-tests the whole stack on every push; `ci-and-deploy.yaml` does nothing
+  but the prod deploy.
+- **Merging to `main` triggers a production deploy over Tailscale.** When
+  `deploy.yaml` finishes **successfully on `main`**, its `workflow_run` event
+  fires `deploy-prod`, which deploys the exact SHA that passed. A failed `gate`
+  never reaches prod; `workflow_dispatch` can promote manually.
 - **The GitHub runner joins Tailscale temporarily.** `deploy-prod` brings up
   a short-lived, OAuth-authenticated `tag:ci` node via
   [`tailscale/github-action@v4`](https://github.com/tailscale/github-action).
   The node is torn down when the job ends.
 - **Deployment happens by SSH into the k3s VM.** Over the tailnet the runner
   SSHes to the VM, pins the host key with `ssh-keyscan` (StrictHostKeyChecking
-  stays on), checks out the **exact commit SHA that passed `build-test`**
-  (`git fetch` → `checkout` → `reset --hard` to `${{ github.sha }}` — not
-  "latest main"), and runs the deploy **locally on the VM**. The Kubernetes
+  stays on), checks out the **exact commit SHA that passed validation**
+  (`git fetch` → `checkout` → `reset --hard` to the upstream run's `head_sha` —
+  not "latest main"), and runs the deploy **locally on the VM**. The Kubernetes
   API is never exposed publicly — it is reachable only over Tailscale + SSH.
 
 ### Two deploy scripts: dev (kind) vs prod (k3s)
@@ -601,15 +602,13 @@ private repo by one of:
 ### Recommended branch protection
 
 Protect `main` so the production deploy can only ever run on a validated
-commit: require the `build-test` check (from `CI and deploy`) to pass before
-merge. Optionally add a required reviewer to the **production** GitHub
-Environment for a manual approval gate before `deploy-prod` runs.
+commit: require the **`gate`** check (from
+[deploy.yaml](.github/workflows/deploy.yaml)) to pass before merge — `gate` is
+green only when every service job and the full-stack `e2e` test passed.
+Optionally add a required reviewer to the **production** GitHub Environment for
+a manual approval gate before `deploy-prod` runs.
 
-> **Note — redundant kind validation on push to `main`.** `deploy.yaml` (the
-> per-chart kind matrix and the required `gate` check) still triggers on push
-> to **any** branch, so a merge to `main` currently runs kind validation twice:
-> once via `deploy.yaml`'s jobs and once via this workflow's `build-test`. This
-> is intentional for now — `deploy.yaml` remains the branch-protection gate and
-> is left untouched. If the duplication is unwanted, narrow `deploy.yaml`'s
-> trigger (e.g. exclude `main`, or restrict paths) rather than removing the
-> gate.
+> **Note.** Validation runs once. `deploy.yaml` (build-all + the required
+> `gate` check) on every push is the single source of truth; `ci-and-deploy.yaml`
+> no longer re-runs its own kind validation — it promotes to prod via
+> `workflow_run`, only after `deploy.yaml` succeeds on `main`.
