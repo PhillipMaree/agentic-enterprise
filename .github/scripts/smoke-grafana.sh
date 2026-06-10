@@ -14,8 +14,11 @@ curl -fsS http://localhost:3000/api/health | tee /tmp/health.json
 grep -qE '"database"[[:space:]]*:[[:space:]]*"ok"' /tmp/health.json
 
 # Provisioned datasources land regardless of whether their backends are
-# up (config-only at this point).
-curl -fsS -u admin:change-me http://localhost:3000/api/datasources | tee /tmp/ds.json
+# up (config-only at this point). Admin user+password come from the
+# agentic-enterprise-grafana-admin Secret (not hardcoded values).
+ADMIN_USER="$(kubectl -n "$NAMESPACE" get secret agentic-enterprise-grafana-admin -o jsonpath='{.data.admin-user}' | base64 -d)"
+ADMIN_PW="$(kubectl -n "$NAMESPACE" get secret agentic-enterprise-grafana-admin -o jsonpath='{.data.admin-password}' | base64 -d)"
+curl -fsS -u "$ADMIN_USER:$ADMIN_PW" http://localhost:3000/api/datasources | tee /tmp/ds.json
 grep -q '"name":"Prometheus"' /tmp/ds.json
 grep -q '"name":"Loki"'       /tmp/ds.json
 grep -q '"name":"Tempo"'      /tmp/ds.json

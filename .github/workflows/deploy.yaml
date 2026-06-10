@@ -37,22 +37,26 @@ jobs:
   changes:
     runs-on: ubuntu-latest
     outputs:
-      seaweedfs:       ${{ steps.filter.outputs.seaweedfs }}
-      redis:           ${{ steps.filter.outputs.redis }}
-      postgres:        ${{ steps.filter.outputs.postgres }}
-      falkordb:        ${{ steps.filter.outputs.falkordb }}
-      keycloak:        ${{ steps.filter.outputs.keycloak }}
-      presidio:        ${{ steps.filter.outputs.presidio }}
-      obot:            ${{ steps.filter.outputs.obot }}
-      prometheus:      ${{ steps.filter.outputs.prometheus }}
-      grafana:         ${{ steps.filter.outputs.grafana }}
-      tempo:           ${{ steps.filter.outputs.tempo }}
-      loki:            ${{ steps.filter.outputs.loki }}
-      otel-collector:  ${{ steps.filter.outputs.otel-collector }}
-      mlflow:          ${{ steps.filter.outputs.mlflow }}
-      litellm:         ${{ steps.filter.outputs.litellm }}
-      sealed-secrets:  ${{ steps.filter.outputs.sealed-secrets }}
-      e2e:             ${{ steps.filter.outputs.e2e }}
+      # Build every service on every push (paths-filter disabled): all outputs
+      # are forced 'true' so each service job in every layer always runs and the
+      # full layered flow is visible. The paths-filter step below still runs but
+      # its result is intentionally unused.
+      seaweedfs:       'true'
+      redis:           'true'
+      postgres:        'true'
+      falkordb:        'true'
+      keycloak:        'true'
+      presidio:        'true'
+      obot:            'true'
+      prometheus:      'true'
+      grafana:         'true'
+      tempo:           'true'
+      loki:            'true'
+      otel-collector:  'true'
+      mlflow:          'true'
+      litellm:         'true'
+      sealed-secrets:  'true'
+      e2e:             'true'
     steps:
       - uses: actions/checkout@v5
       - uses: dorny/paths-filter@v4
@@ -209,7 +213,7 @@ jobs:
               - 'deploy/kind/kind-config.yaml'
               - 'deploy.sh'
               - '.github/workflows/deploy.yaml'
-              - '.github/scripts/smoke-platform-e2e.sh'
+              - '.github/scripts/smoke-stack-e2e.sh'
               - '.github/scripts/_common.sh'
 
   # ----- Layer 0: infra + hand-written charts (no chart deps) -------------
@@ -363,7 +367,7 @@ jobs:
       run:
         shell: bash
     env:
-      NAMESPACE: agentic-platform
+      NAMESPACE: agentic-enterprise
     steps:
       - uses: actions/checkout@v5
       - name: Free disk space
@@ -377,14 +381,14 @@ jobs:
       - uses: helm/kind-action@v1
         with:
           config: deploy/kind/kind-config.yaml
-          cluster_name: agentic-platform
+          cluster_name: agentic-enterprise
       - name: ./deploy.sh --up (full stack, mock litellm)
         env:
           LITELLM_USE_MOCK_MODELS: "1"
         run: ./deploy.sh --up
       - run: kubectl -n "$NAMESPACE" get pods,svc
       - name: Smoke
-        run: bash .github/scripts/smoke-platform-e2e.sh
+        run: bash .github/scripts/smoke-stack-e2e.sh
       - name: Dump diagnostics on failure
         if: failure()
         run: |
@@ -395,13 +399,8 @@ jobs:
             kubectl -n "$NAMESPACE" logs -l "app.kubernetes.io/instance=$rel" --all-containers --tail=100 || true
           done
 
-      - name: Abort the whole run on failure
-        # Fail-fast: cancel sibling jobs the moment e2e fails. Runs after
-        # the diagnostics dump above so logs are captured first.
-        if: failure()
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh run cancel "${{ github.run_id }}"
+      # No fail-fast abort: e2e failing turns the run red via the `gate` job
+      # below, without cancelling sibling chart jobs.
 
   # ----- Merge gate: the single required check for branch protection ------
   # Runs unconditionally (always()) so it ALWAYS reports a status, even

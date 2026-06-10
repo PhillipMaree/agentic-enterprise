@@ -41,7 +41,7 @@ jobs:
       run:
         shell: bash
     env:
-      NAMESPACE: agentic-platform
+      NAMESPACE: agentic-enterprise
     steps:
       - uses: actions/checkout@v5
 
@@ -60,7 +60,7 @@ jobs:
         uses: helm/kind-action@v1
         with:
           config: deploy/kind/kind-config.yaml
-          cluster_name: agentic-platform
+          cluster_name: agentic-enterprise
 
       - name: ./deploy.sh --up (full stack, mock litellm)
         env:
@@ -70,7 +70,7 @@ jobs:
       - run: kubectl -n "$NAMESPACE" get pods,svc
 
       - name: Smoke (full-stack e2e)
-        run: bash .github/scripts/smoke-platform-e2e.sh
+        run: bash .github/scripts/smoke-stack-e2e.sh
 
       - name: Dump diagnostics on failure
         if: failure()
@@ -139,7 +139,7 @@ jobs:
           # Where the repo lives on the VM, and where to clone it from if it
           # doesn't. github.repository is "owner/name".
           # TODO: confirm APP_DIR matches the real path on the VM.
-          APP_DIR: /opt/agentic-platform
+          APP_DIR: /opt/agentic-enterprise
           REPO_URL: https://github.com/${{ github.repository }}.git
         run: |
           set -euo pipefail

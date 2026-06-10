@@ -1,6 +1,6 @@
 apiVersion: v2
-name: platform-seaweedfs
-description: SeaweedFS S3 for the agentic-platform namespace (dev/kind deploy).
+name: agentic-enterprise-seaweedfs
+description: SeaweedFS S3 for the agentic-enterprise namespace (dev/kind deploy).
 type: application
 version: 0.1.0
 appVersion: "4.29"

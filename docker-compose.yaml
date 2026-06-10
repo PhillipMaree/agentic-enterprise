@@ -1,4 +1,4 @@
-# agentic-platform — local dev stack.
+# agentic-enterprise — local dev stack.
 #
 # Three planes:
 #   - Data:       LiteLLM proxy, MCP gateway, Presidio (PII masking)
@@ -266,7 +266,9 @@ services:
       OBOT_SERVER_AUTH_REGISTRY_REQUIRE_AUTH: "false"
       OBOT_SERVER_UPDATE_CHECK: "false"
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/api/health >/dev/null 2>&1 || exit 1"]
+      # The obot image has curl but not wget, and /api/health is auth-gated (403);
+      # /api/version returns 200 unauthenticated, so use that as the liveness probe.
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/api/version >/dev/null || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 5
@@ -455,11 +457,18 @@ services:
   # in-network validators.
   keycloak:
     image: quay.io/keycloak/keycloak:26.1
+    # Keycloak 26 does NOT honour the *_FILE convention for the bootstrap admin
+    # password (unlike postgres/grafana), so read the file-based secret into the
+    # env var via an entrypoint wrapper before exec'ing kc.sh. ($$ escapes $ so
+    # Compose passes it through to the shell.)
+    entrypoint:
+      - /bin/bash
+      - -c
+      - export KC_BOOTSTRAP_ADMIN_PASSWORD="$$(cat /run/secrets/keycloak_admin_password)"; exec /opt/keycloak/bin/kc.sh "$$@"
+      - --
     command: ["start-dev", "--import-realm", "--features=token-exchange"]
     environment:
       KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN_USERNAME:-admin}
-      # Admin password from a file-based secret (Keycloak 26 reads *_FILE).
-      KC_BOOTSTRAP_ADMIN_PASSWORD_FILE: /run/secrets/keycloak_admin_password
       KC_HOSTNAME: http://keycloak:18080
       KC_HOSTNAME_STRICT: "false"
       KC_HTTP_ENABLED: "true"

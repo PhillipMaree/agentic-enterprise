@@ -33,13 +33,12 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: read
-      actions: write   # cancel-on-failure: a failed chart aborts the run
     defaults:
       run:
         shell: bash
     env:
-      NAMESPACE: agentic-platform
-      RELEASE: platform-${{ inputs.chart }}
+      NAMESPACE: agentic-enterprise
+      RELEASE: agentic-enterprise-${{ inputs.chart }}
     steps:
       - uses: actions/checkout@v5
 
@@ -51,7 +50,7 @@ jobs:
         uses: helm/kind-action@v1
         with:
           config: deploy/kind/kind-config.yaml
-          cluster_name: agentic-platform
+          cluster_name: agentic-enterprise
 
       - name: Free disk space
         # The full stack pulls a lot of images. Cheap to do unconditionally.
@@ -81,12 +80,6 @@ jobs:
             echo "=== $rel ==="
             kubectl -n "$NAMESPACE" logs -l "app.kubernetes.io/instance=$rel" --all-containers --tail=100 || true
           done
-
-      - name: Abort the whole run on failure
-        # Fail-fast: the first chart to fail cancels every sibling job so the
-        # run stops left-to-right instead of finishing the rest of the layer.
-        # Runs after diagnostics so logs are captured first.
-        if: failure()
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh run cancel "${{ github.run_id }}"
+      # No fail-fast: a failed chart shows red on its own; sibling jobs run to
+      # completion so the full per-service result is visible. The `gate` job in
+      # deploy.yaml is what turns the run red if any job failed.

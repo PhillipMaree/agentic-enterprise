@@ -2,10 +2,10 @@
 # installed directly. Mirrors config/litellm/config.yaml.
 #
 # Prereqs handled by deploy.sh:
-#   - platform-postgres, platform-redis, platform-presidio,
-#     platform-otel-collector all installed (HARD_DEPS)
+#   - agentic-enterprise-postgres, agentic-enterprise-redis, agentic-enterprise-presidio,
+#     agentic-enterprise-otel-collector all installed (HARD_DEPS)
 #   - `litellm` database created in postgres (bootstrap_litellm_db hook)
-#   - `platform-litellm-secrets` Secret with masterkey + provider keys
+#   - `agentic-enterprise-litellm-secrets` Secret with masterkey + provider keys
 #     (create_litellm_secret hook)
 
 replicaCount: 1
@@ -19,19 +19,19 @@ service:
   type: ClusterIP
   port: 4000
 
-# Use existing platform-postgres rather than the bundled standalone DB.
+# Use existing agentic-enterprise-postgres rather than the bundled standalone DB.
 # Secret keys come from our postgres chart: POSTGRES_USER / POSTGRES_PASSWORD.
 db:
   deployStandalone: false
   useExisting: true
-  endpoint: platform-postgres:5432
+  endpoint: agentic-enterprise-postgres:5432
   database: litellm
   secret:
-    name: platform-postgres
+    name: agentic-enterprise-postgres
     usernameKey: POSTGRES_USER
     passwordKey: POSTGRES_PASSWORD
 
-# Disable the BUNDLED redis subchart — we use the existing platform-redis
+# Disable the BUNDLED redis subchart — we use the existing agentic-enterprise-redis
 # release. Connection info goes via the proxy_config.cache_params block
 # above, NOT via this `redis:` block (that one controls the subchart).
 redis:
@@ -75,7 +75,7 @@ proxy_config:
     cache: true
     cache_params:
       type: redis
-      host: platform-redis
+      host: agentic-enterprise-redis
       port: 6379
       db: 1
 
@@ -92,7 +92,7 @@ proxy_config:
   general_settings:
     store_model_in_db: true
 
-masterkeySecretName: platform-litellm-secrets
+masterkeySecretName: agentic-enterprise-litellm-secrets
 masterkeySecretKey: masterkey
 
 extraEnvVars:
@@ -111,23 +111,23 @@ extraEnvVars:
   - name: DISABLE_SCHEMA_UPDATE
     value: "true"
   - name: PRESIDIO_ANALYZER_API_BASE
-    value: http://platform-presidio-analyzer:3000
+    value: http://agentic-enterprise-presidio-analyzer:3000
   - name: PRESIDIO_ANONYMIZER_API_BASE
-    value: http://platform-presidio-anonymizer:3000
+    value: http://agentic-enterprise-presidio-anonymizer:3000
   - name: OTEL_EXPORTER_OTLP_ENDPOINT
-    value: http://platform-otel-collector-opentelemetry-collector:4317
+    value: http://agentic-enterprise-otel-collector-opentelemetry-collector:4317
   - name: OTEL_SERVICE_NAME
     value: litellm
   - name: ANTHROPIC_API_KEY
     valueFrom:
       secretKeyRef:
-        name: platform-litellm-secrets
+        name: agentic-enterprise-litellm-secrets
         key: anthropic-api-key
         optional: true
   - name: OPENAI_API_KEY
     valueFrom:
       secretKeyRef:
-        name: platform-litellm-secrets
+        name: agentic-enterprise-litellm-secrets
         key: openai-api-key
         optional: true
 

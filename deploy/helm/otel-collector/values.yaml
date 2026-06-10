@@ -68,15 +68,15 @@ config:
 
   exporters:
     otlp/tempo:
-      endpoint: platform-tempo:4317
+      endpoint: agentic-enterprise-tempo:4317
       tls:
         insecure: true
     prometheusremotewrite:
-      endpoint: http://platform-prometheus-server/api/v1/write
+      endpoint: http://agentic-enterprise-prometheus-server/api/v1/write
       tls:
         insecure: true
     otlphttp/loki:
-      endpoint: http://platform-loki:3100/otlp
+      endpoint: http://agentic-enterprise-loki:3100/otlp
       tls:
         insecure: true
 

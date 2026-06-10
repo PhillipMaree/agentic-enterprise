@@ -1,7 +1,7 @@
-# platform-postgres
+# agentic-enterprise-postgres
 
 Minimal Helm chart that deploys **Postgres** (`postgres:latest`) into the
-`agentic-platform` namespace.
+`agentic-enterprise` namespace.
 
 Includes:
 
@@ -16,16 +16,16 @@ Includes:
 ## Install
 
 ```bash
-helm install platform-postgres deploy/helm/postgres \
-  --namespace agentic-platform --create-namespace \
+helm install agentic-enterprise-postgres deploy/helm/postgres \
+  --namespace agentic-enterprise --create-namespace \
   --wait --timeout 5m
 ```
 
 ## Override the credentials
 
 ```bash
-helm install platform-postgres deploy/helm/postgres \
-  --namespace agentic-platform --create-namespace \
+helm install agentic-enterprise-postgres deploy/helm/postgres \
+  --namespace agentic-enterprise --create-namespace \
   --set auth.username=myuser \
   --set auth.password=$(openssl rand -base64 24) \
   --set auth.database=mydb \
@@ -35,13 +35,13 @@ helm install platform-postgres deploy/helm/postgres \
 ## Reach the service
 
 ```bash
-kubectl -n agentic-platform port-forward svc/platform-postgres 5432:5432
+kubectl -n agentic-enterprise port-forward svc/agentic-enterprise-postgres 5432:5432
 psql "postgres://postgres:password@127.0.0.1:5432/mlflow" -c "SELECT version();"
 ```
 
 ## Uninstall
 
 ```bash
-helm uninstall platform-postgres -n agentic-platform
-kubectl delete pvc platform-postgres -n agentic-platform
+helm uninstall agentic-enterprise-postgres -n agentic-enterprise
+kubectl delete pvc agentic-enterprise-postgres -n agentic-enterprise
 ```

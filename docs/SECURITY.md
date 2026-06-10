@@ -1,13 +1,13 @@
 # Security posture (dev-only)
 
-This platform is a **local development stack**. Auth is off or set to dev
+This is a **local development stack**. Auth is off or set to dev
 defaults; nothing here is hardened for a shared or production cluster. This
 document explains how secrets are handled so the patterns translate to prod
 with a key swap.
 
 ## Kubernetes: Sealed Secrets
 
-All platform credentials on the kind/Helm path are managed with
+All stack credentials on the kind/Helm path are managed with
 [Bitnami Sealed Secrets](https://github.com/bitnami-labs/sealed-secrets):
 
 ```
@@ -18,7 +18,7 @@ All platform credentials on the kind/Helm path are managed with
 - The controller runs in `kube-system` (chart `sealed-secrets@2.17.9` ==
   controller `0.33.1`, matched to the `kubeseal` CLI).
 - Committed `SealedSecret`s live in [`deploy/sealed-secrets/`](../deploy/sealed-secrets/)
-  and decrypt into the `platform-*` Secrets the charts consume.
+  and decrypt into the `agentic-enterprise-*` Secrets the charts consume.
 - `deploy.sh` applies the dev sealing key, installs the controller, waits for
   it to be Ready, applies the SealedSecrets, and waits for the derived Secrets
   — all before any chart that consumes them.
@@ -58,7 +58,7 @@ secret manager, encrypted backup, or restricted ops vault).
 Seal from a local `.env` against a public cert (no running cluster needed):
 
 ```bash
-./deploy.sh --seal platform-postgres postgres.sealed.yaml \
+./deploy.sh --seal agentic-enterprise-postgres postgres.sealed.yaml \
   --from-literal=POSTGRES_USER=postgres \
   --from-literal=POSTGRES_PASSWORD=password \
   --from-literal=POSTGRES_DB=mlflow

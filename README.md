@@ -1,6 +1,6 @@
-# agentic-platform
+# agentic-enterprise
 
-End-to-end local development platform for agentic AI: an LLM gateway with
+End-to-end local development stack for agentic AI: an LLM gateway with
 built-in PII masking, an MCP tool federation gateway, experiment tracking,
 a full traces/logs/metrics observability stack, and a Keycloak identity
 provider for OIDC auth (with token exchange across the agent chain) — all
@@ -11,8 +11,8 @@ else.
 Two consumption surfaces, both running the same set of services:
 
 - **Docker Compose** — fastest local loop. `docker compose up -d`.
-- **Helm charts** — one chart per service, all named `platform-<svc>`,
-  installed into the `agentic-platform` namespace of a local
+- **Helm charts** — one chart per service, all named `agentic-enterprise-<svc>`,
+  installed into the `agentic-enterprise` namespace of a local
   [kind](https://kind.sigs.k8s.io/) cluster.
 
 > Dev-only. Auth is off or set to defaults. Do not point any of this at a
@@ -104,7 +104,7 @@ flowchart TB
 - Dotted arrows are OTLP telemetry (asynchronous, fire-and-forget).
 - The **agentic app's only required outbound surfaces** are LiteLLM (LLM calls),
   the MCP gateway (tools), the OTel collector (telemetry), and Keycloak (OIDC
-  login + token exchange). Everything else is internal to the platform.
+  login + token exchange). Everything else is internal to the stack.
 - **Keycloak is the IdP**: the browser logs in against the `agentic-dev` realm,
   and the agent chain exchanges tokens client-to-client (see the
   [chart README](deploy/helm/keycloak/README.md) for the realm's clients and
@@ -262,11 +262,11 @@ provisioning a real cluster. All orchestration is wrapped in
 
 The script:
 
-- reuses an existing `agentic-platform` kind cluster if present
+- reuses an existing `agentic-enterprise` kind cluster if present
 - installs the **Sealed Secrets controller** into `kube-system` (adopting the
   committed dev sealing key in `secrets/dev/`), then applies the committed
   `SealedSecret`s in [deploy/sealed-secrets/](deploy/sealed-secrets/) — they
-  decrypt into the `platform-*` Secrets the charts consume (postgres, keycloak
+  decrypt into the `agentic-enterprise-*` Secrets the charts consume (postgres, keycloak
   admin, grafana admin, litellm masterkey, S3 creds)
 - runs `helm dependency update` + extracts subchart tarballs (Helm 3.21+
   requires deps unpacked into `charts/<name>/`, not just present as `.tgz`)
@@ -277,9 +277,9 @@ The script:
 Try it (run each port-forward in its own terminal):
 
 ```bash
-kubectl -n agentic-platform port-forward svc/platform-litellm 4000:4000
-kubectl -n agentic-platform port-forward svc/platform-grafana 3000:80
-kubectl -n agentic-platform port-forward svc/platform-mlflow  5000:5000
+kubectl -n agentic-enterprise port-forward svc/agentic-enterprise-litellm 4000:4000
+kubectl -n agentic-enterprise port-forward svc/agentic-enterprise-grafana 3000:80
+kubectl -n agentic-enterprise port-forward svc/agentic-enterprise-mlflow  5000:5000
 ```
 
 <details>
@@ -287,11 +287,11 @@ kubectl -n agentic-platform port-forward svc/platform-mlflow  5000:5000
 
 ```bash
 # 1. Cluster + namespace
-kind create cluster --config deploy/kind/kind-config.yaml --name agentic-platform
-kubectl create namespace agentic-platform
+kind create cluster --config deploy/kind/kind-config.yaml --name agentic-enterprise
+kubectl create namespace agentic-enterprise
 
 # 1b. Sealed Secrets: adopt the committed dev key, install the controller,
-#     then apply the committed SealedSecrets (they decrypt into platform-* Secrets).
+#     then apply the committed SealedSecrets (they decrypt into agentic-enterprise-* Secrets).
 kubectl apply -f secrets/dev/sealed-secrets-dev-keypair.yaml
 helm -n kube-system upgrade --install sealed-secrets sealed-secrets \
   --repo https://bitnami-labs.github.io/sealed-secrets --version 2.17.9 \
@@ -306,27 +306,27 @@ for c in seaweedfs tempo loki prometheus grafana otel-collector mlflow litellm; 
 done
 
 # 3. Shared infrastructure
-helm install platform-seaweedfs deploy/helm/seaweedfs -n agentic-platform --wait --timeout 5m
-helm install platform-redis     deploy/helm/redis     -n agentic-platform --wait --timeout 5m
-helm install platform-postgres  deploy/helm/postgres  -n agentic-platform --wait --timeout 5m
-helm install platform-falkordb  deploy/helm/falkordb  -n agentic-platform --wait --timeout 5m
+helm install agentic-enterprise-seaweedfs deploy/helm/seaweedfs -n agentic-enterprise --wait --timeout 5m
+helm install agentic-enterprise-redis     deploy/helm/redis     -n agentic-enterprise --wait --timeout 5m
+helm install agentic-enterprise-postgres  deploy/helm/postgres  -n agentic-enterprise --wait --timeout 5m
+helm install agentic-enterprise-falkordb  deploy/helm/falkordb  -n agentic-enterprise --wait --timeout 5m
 
 # 4. Bootstrap (buckets via in-cluster Job + litellm DB)
 # (see bootstrap_buckets / bootstrap_litellm_db in deploy.sh)
 
 # 5. Telemetry + tracking
-helm install platform-tempo          deploy/helm/tempo          -n agentic-platform --wait --timeout 5m
-helm install platform-loki           deploy/helm/loki           -n agentic-platform --wait --timeout 8m
-helm install platform-prometheus     deploy/helm/prometheus     -n agentic-platform --wait --timeout 5m
-helm install platform-grafana        deploy/helm/grafana        -n agentic-platform --wait --timeout 5m
-helm install platform-otel-collector deploy/helm/otel-collector -n agentic-platform --wait --timeout 5m
-helm install platform-mlflow         deploy/helm/mlflow         -n agentic-platform --wait --timeout 8m
+helm install agentic-enterprise-tempo          deploy/helm/tempo          -n agentic-enterprise --wait --timeout 5m
+helm install agentic-enterprise-loki           deploy/helm/loki           -n agentic-enterprise --wait --timeout 8m
+helm install agentic-enterprise-prometheus     deploy/helm/prometheus     -n agentic-enterprise --wait --timeout 5m
+helm install agentic-enterprise-grafana        deploy/helm/grafana        -n agentic-enterprise --wait --timeout 5m
+helm install agentic-enterprise-otel-collector deploy/helm/otel-collector -n agentic-enterprise --wait --timeout 5m
+helm install agentic-enterprise-mlflow         deploy/helm/mlflow         -n agentic-enterprise --wait --timeout 8m
 
-# 6. Data plane (platform-litellm-secrets already exists from step 1b — its
+# 6. Data plane (agentic-enterprise-litellm-secrets already exists from step 1b — its
 #    masterkey is sealed; the kind path is mock-only so no provider keys here)
-helm install platform-presidio    deploy/helm/presidio    -n agentic-platform --wait --timeout 5m
-helm install platform-obot         deploy/helm/obot         -n agentic-platform --wait --timeout 8m
-helm install platform-litellm deploy/helm/litellm -n agentic-platform --wait --timeout 10m
+helm install agentic-enterprise-presidio    deploy/helm/presidio    -n agentic-enterprise --wait --timeout 5m
+helm install agentic-enterprise-obot         deploy/helm/obot         -n agentic-enterprise --wait --timeout 8m
+helm install agentic-enterprise-litellm deploy/helm/litellm -n agentic-enterprise --wait --timeout 10m
 ```
 
 </details>
@@ -514,7 +514,7 @@ text — the proxy exercises auth + Postgres logging + OTel emission
 without hitting Anthropic/OpenAI. No repo secrets needed.
 
 **The e2e job** runs the full chain test
-([smoke-platform-e2e.sh](.github/scripts/smoke-platform-e2e.sh)):
+([smoke-stack-e2e.sh](.github/scripts/smoke-stack-e2e.sh)):
 drive a chat completion through LiteLLM (mock model), then verify
 the resulting metrics arrived in Prometheus. Catches cross-chart
 regressions that per-chart tests can't.
@@ -585,7 +585,7 @@ The prod deploy script is **separate** from the kind deploy script:
 ### VM repo access
 
 `deploy-prod` runs `git fetch` / `checkout` / `reset --hard` in `APP_DIR` on
-the VM (default `/opt/agentic-platform`). The workflow deliberately does **not**
+the VM (default `/opt/agentic-enterprise`). The workflow deliberately does **not**
 embed any token in the SSH script. The VM must already be able to reach this
 private repo by one of:
 

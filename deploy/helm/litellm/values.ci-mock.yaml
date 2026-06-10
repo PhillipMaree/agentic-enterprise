@@ -1,4 +1,4 @@
-# CI-only overlay for platform-litellm. Replaces the production model list
+# CI-only overlay for agentic-enterprise-litellm. Replaces the production model list
 # with `mock_response` models so the proxy returns canned text instead of
 # calling real Anthropic / OpenAI / etc. Lets CI exercise the full request
 # path (auth, presidio guardrail, postgres logging, OTel emission)

@@ -9,15 +9,15 @@ source "$(dirname "$0")/_common.sh"
 # `port-forward svc/...` ignores readiness — on a fresh cluster it can
 # pick the migrations pod (no `http` port) and fail. deploy/... only ever
 # resolves to the proxy pod.
-kubectl -n "$NAMESPACE" port-forward deploy/platform-litellm        4000:4000 >/tmp/pf-litellm.log 2>&1 &
-kubectl -n "$NAMESPACE" port-forward svc/platform-prometheus-server 9090:80   >/tmp/pf-prom.log 2>&1 &
+kubectl -n "$NAMESPACE" port-forward deploy/agentic-enterprise-litellm        4000:4000 >/tmp/pf-litellm.log 2>&1 &
+kubectl -n "$NAMESPACE" port-forward svc/agentic-enterprise-prometheus-server 9090:80   >/tmp/pf-prom.log 2>&1 &
 trap 'jobs -p | xargs -r kill 2>/dev/null || true' EXIT
 wait_for_port 4000
 wait_for_port 9090
 wait_for_http http://localhost:4000/health/readiness
 wait_for_http http://localhost:9090/-/ready
 
-MASTER_KEY="$(kubectl -n "$NAMESPACE" get secret platform-litellm-secrets -o jsonpath='{.data.masterkey}' | base64 -d)"
+MASTER_KEY="$(kubectl -n "$NAMESPACE" get secret agentic-enterprise-litellm-secrets -o jsonpath='{.data.masterkey}' | base64 -d)"
 
 # Fire a few mock-model requests so Prometheus has scrape samples.
 for i in 1 2 3; do

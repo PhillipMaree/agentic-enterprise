@@ -1,11 +1,11 @@
 # Overrides for community-charts/mlflow, installed directly via `--repo`.
 #
-# Backend store: Postgres (the existing platform-postgres release).
+# Backend store: Postgres (the existing agentic-enterprise-postgres release).
 # Artifact store: SeaweedFS S3 (mlflow-artifacts bucket).
 #
 # Prereqs handled by deploy.sh:
-#   - platform-postgres installed (HARD_DEPS)
-#   - platform-seaweedfs installed (HARD_DEPS)
+#   - agentic-enterprise-postgres installed (HARD_DEPS)
+#   - agentic-enterprise-seaweedfs installed (HARD_DEPS)
 #   - mlflow-artifacts bucket created (bootstrap_buckets pre-install hook)
 # The `mlflow` database in postgres is created by default (POSTGRES_DB).
 
@@ -21,7 +21,7 @@ backendStore:
   databaseMigration: true
   postgres:
     enabled: true
-    host: platform-postgres
+    host: agentic-enterprise-postgres
     port: 5432
     database: mlflow
     user: postgres
@@ -32,7 +32,7 @@ artifactRoot:
     enabled: true
     bucket: mlflow-artifacts
     # Left empty on purpose: AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY are
-    # injected from the platform-s3-creds Secret via extraSecretNamesForEnvFrom
+    # injected from the agentic-enterprise-s3-creds Secret via extraSecretNamesForEnvFrom
     # below (decrypted from deploy/sealed-secrets/s3.sealed.yaml). The chart
     # only bakes these into its own Secret when both are non-empty.
     awsAccessKeyId: ""
@@ -41,10 +41,10 @@ artifactRoot:
 # envFrom the S3 credentials Secret — supplies AWS_ACCESS_KEY_ID,
 # AWS_SECRET_ACCESS_KEY (and harmless AWS_DEFAULT_REGION/S3_ENDPOINT_URL).
 extraSecretNamesForEnvFrom:
-  - platform-s3-creds
+  - agentic-enterprise-s3-creds
 
 extraEnvVars:
-  MLFLOW_S3_ENDPOINT_URL: http://platform-seaweedfs-all-in-one:8333
+  MLFLOW_S3_ENDPOINT_URL: http://agentic-enterprise-seaweedfs-all-in-one:8333
   MLFLOW_S3_IGNORE_TLS: "true"
   AWS_DEFAULT_REGION: us-east-1
 

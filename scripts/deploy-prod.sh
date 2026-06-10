@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# scripts/deploy-prod.sh — deploy the agentic-platform to the PRODUCTION k3s
+# scripts/deploy-prod.sh — deploy the agentic-enterprise to the PRODUCTION k3s
 # cluster.
 #
 # Runs ON the k3s VM (invoked by the prod GitHub Actions workflow over SSH,
@@ -16,7 +16,7 @@
 # reapplies current values without recreating anything.
 #
 # Env overrides:
-#   PROD_NAMESPACE   target namespace (default: agentic-platform, shared with dev)
+#   PROD_NAMESPACE   target namespace (default: agentic-enterprise, shared with dev)
 #   SEALED_DIR_PROD  dir of prod-sealed SealedSecrets (default: deploy/sealed-secrets/prod)
 
 set -euo pipefail
@@ -36,7 +36,7 @@ source "$REPO_ROOT/deploy.sh"
 # ---------- prod overrides ------------------------------------------------
 # Reassign globals that the sourced functions read. install_chart, ensure_ns,
 # the bootstrap jobs and the sealed-secrets helpers all reference $NS.
-NS="${PROD_NAMESPACE:-agentic-platform}"
+NS="${PROD_NAMESPACE:-agentic-enterprise}"
 # Prod SealedSecrets are sealed with secrets/prod/sealed-secrets-public-cert.pem
 # (the committed ones in $SEALED_DIR are DEV-sealed and won't decrypt in prod).
 SEALED_DIR_PROD="${SEALED_DIR_PROD:-deploy/sealed-secrets/prod}"
@@ -66,7 +66,7 @@ verify_cluster() {
 # The prod private key is managed OUT OF BAND and never committed. We do NOT
 # apply the dev keypair (secrets/dev/...) here. We only (a) confirm the
 # controller is up and (b) apply prod-sealed SealedSecrets so they decrypt
-# into the platform-* Secrets the charts consume.
+# into the agentic-enterprise-* Secrets the charts consume.
 bootstrap_sealed_secrets_prod() {
   if ! sealed_controller_installed; then
     warn "Sealed Secrets controller not found in $SEALED_NS."
@@ -84,7 +84,7 @@ bootstrap_sealed_secrets_prod() {
       wait_for_secret "$s" && ok "Secret $s ready"
     done
   else
-    warn "No prod SealedSecrets in $SEALED_DIR_PROD — assuming the platform-*"
+    warn "No prod SealedSecrets in $SEALED_DIR_PROD — assuming the agentic-enterprise-*"
     warn "Secrets already exist in '$NS'. To manage them in-repo, seal with the"
     warn "prod cert and commit there:"
     warn "  ./deploy.sh --seal --env prod <name> <out.yaml> --from-literal=k=v"
@@ -104,7 +104,7 @@ main() {
   # Same chart catalog and ordering as the dev full --up, installed with
   # `helm upgrade --install` (idempotent). LITELLM_USE_MOCK_MODELS is left
   # unset, so litellm gets its real values.yaml (real provider keys from the
-  # prod platform-litellm-secrets Secret) — NOT the CI mock overlay.
+  # prod agentic-enterprise-litellm-secrets Secret) — NOT the CI mock overlay.
   step "Deploying charts to '$NS' (helm upgrade --install)"
   for c in "${INSTALL_ORDER[@]}"; do
     install_chart "$c"

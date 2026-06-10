@@ -62,7 +62,7 @@ litellm_settings:
   require_auth_for_metrics_endpoint: false
 
   # Redis-backed response cache. Same Redis instance the rest of the
-  # platform uses; DB 1 keeps keys isolated.
+  # stack uses; DB 1 keeps keys isolated.
   cache: true
   cache_params:
     type: redis
