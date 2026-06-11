@@ -61,6 +61,10 @@ jobs:
       e2e:             'true'
     steps:
       - uses: actions/checkout@v5
+      # Fail the run (and thus the `gate`) if any raw secret material was
+      # committed under deploy/sealed-secrets/ — only kind: SealedSecret allowed.
+      - name: No raw secrets committed
+        run: bash scripts/check-no-raw-secrets.sh
       - uses: dorny/paths-filter@v4
         id: filter
         with:

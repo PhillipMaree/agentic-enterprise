@@ -13,12 +13,29 @@
 # Compose file-based secrets: values are local-only, only *.example committed.
 secrets/compose/*
 !secrets/compose/*.example
-# Never commit unsealed Secret manifests or any prod private key.
-# (Committed: deploy/sealed-secrets/*.sealed.yaml, secrets/dev|prod/*.pem,
-#  secrets/dev/sealed-secrets-dev-keypair.yaml — all intentionally tracked.)
+# Never commit unsealed Secret manifests, raw secret material, or private keys.
+# Deliberate exceptions are re-included via the negations at the end of this
+# block: encrypted SealedSecret manifests, the PUBLIC sealing certs, and the
+# dev-only keypair (committed for reproducible kind).
 *.unsealed.yaml
+*.unsealed.yml
+*.secret.yaml
+*.secret.yml
+*.env
+*.key
+*.crt
+*.pem
+kubeconfig*
+deploy/sealed-secrets/**/*.tmp
+deploy/sealed-secrets/**/raw/
 secrets/prod/*-key*.pem
 secrets/prod/*keypair*
+# Keep tracked (encrypted or non-secret):
+!deploy/sealed-secrets/**/*.sealed.yaml
+!deploy/sealed-secrets/**/*.sealedsecret.yaml
+!secrets/dev/sealed-secrets-public-cert.pem
+!secrets/prod/sealed-secrets-public-cert.pem
+!secrets/dev/sealed-secrets-dev-keypair.yaml
 
 # Helm
 *.tgz

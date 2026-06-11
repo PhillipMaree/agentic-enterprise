@@ -82,20 +82,40 @@ bootstrap_sealed_secrets_prod() {
   fi
   ok "Sealed Secrets controller present in $SEALED_NS"
 
+  # Path 1: committed prod SealedSecrets — apply them and wait for the
+  # controller to decrypt them into the Secrets the charts consume.
   if [ -d "$SEALED_DIR_PROD" ] && compgen -G "$SEALED_DIR_PROD/*.yaml" >/dev/null 2>&1; then
     step "Applying prod SealedSecrets from $SEALED_DIR_PROD"
     kubectl apply -f "$SEALED_DIR_PROD"
     for s in "${SEALED_SECRET_NAMES[@]}"; do
       wait_for_secret "$s" && ok "Secret $s ready"
     done
-  else
-    warn "No prod SealedSecrets in $SEALED_DIR_PROD — assuming the agentic-enterprise-*"
-    warn "Secrets already exist in '$NS'. To manage them in-repo, seal with the"
-    warn "prod cert and commit there:"
-    warn "  ./deploy.sh --seal --env prod <name> <out.yaml> --from-literal=k=v"
-    # Don't hard-fail: a cluster bootstrapped out-of-band may already hold the
-    # Secrets. install_chart's --wait will surface any that are actually absent.
+    return 0
   fi
+
+  # Path 2: no committed prod SealedSecrets. Never auto-create secrets — decide
+  # whether to continue based on what already exists live in the namespace.
+  local missing=()
+  for s in "${SEALED_SECRET_NAMES[@]}"; do
+    kubectl -n "$NS" get secret "$s" >/dev/null 2>&1 || missing+=("$s")
+  done
+
+  if [ "${#missing[@]}" -eq 0 ]; then
+    warn "No committed prod SealedSecrets in $SEALED_DIR_PROD."
+    warn "All required Secrets already exist in '$NS', so deployment continues —"
+    warn "but prod secrets are currently managed manually (not in GitOps)."
+    warn "To move them into the repo, seal with the prod cert and commit ONLY the"
+    warn "sealed YAML (never raw values):"
+    warn "  ./deploy.sh --seal --env prod <name> prod/<name>.sealedsecret.yaml --from-literal=k=v"
+    warn "  (see deploy/sealed-secrets/prod/README.md)"
+    return 0
+  fi
+
+  warn "Required production Secrets are missing and no prod SealedSecrets were found:"
+  for s in "${missing[@]}"; do warn "  - $s"; done
+  warn "Create sealed prod secrets before deploying — do NOT commit raw Secret"
+  warn "manifests. See deploy/sealed-secrets/prod/README.md."
+  exit 1
 }
 
 # ---------- main ----------------------------------------------------------
