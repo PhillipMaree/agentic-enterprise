@@ -1,22 +1,23 @@
-name: CI and prod deploy
+name: prod deploy
+run-name: prod-deploy ${{ github.sha }}
 
 # Production promotion only. Validation is owned by deploy.yaml (the build-all
-# `gate` job). This workflow SSHes into the remote k3s VM and deploys there —
-# ONLY after deploy.yaml completes successfully on `main`.
+# `gate` job) on the PR. main only advances via a gate-green PR, so a push to
+# main is already validated — this workflow deploys it straight to the k3s VM,
+# without re-running the build-all on main.
 #
-#   workflow_run (deploy succeeded on main) → deploy-prod (the validated SHA)
-#   workflow_dispatch                       → deploy-prod (manual promote)
+#   push → main        → deploy-prod (the merge commit)
+#   workflow_dispatch  → deploy-prod (manual promote, main only)
 #
 # deploy-prod joins the tailnet with an ephemeral Tailscale node, SSHes into
-# the remote k3s VM, checks out the EXACT commit that passed validation, and
-# runs the deploy there. The Kubernetes API is never exposed publicly — all
-# kubectl/helm runs locally on the VM, reached only over Tailscale + SSH.
+# the remote k3s VM, checks out that commit, and runs the deploy there. The
+# Kubernetes API is never exposed publicly — all kubectl/helm runs locally on
+# the VM, reached only over Tailscale + SSH.
 
 on:
-  # Promote after deploy.yaml's build-all `gate` goes green on main.
-  workflow_run:
-    workflows: [deploy]
-    types: [completed]
+  # main only advances via a gate-green PR, so a push to main is already
+  # validated — deploy it straight to prod (no re-run of the build-all).
+  push:
     branches: [main]
   workflow_dispatch:
 
@@ -30,13 +31,10 @@ concurrency:
 
 jobs:
   # ----- deploy-prod: SSH into the remote k3s VM over Tailscale ------------
-  # Validation lives in deploy.yaml (build-all + `gate`). This job only runs
-  # when that workflow finished successfully on main (workflow_run), or on a
-  # manual workflow_dispatch. A failed validation never reaches here.
+  # Validation lives in deploy.yaml (build-all + `gate`) on the PR. This runs on
+  # a push to main (a pre-validated merge) or a manual workflow_dispatch on main.
   deploy-prod:
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      github.event.workflow_run.conclusion == 'success'
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     # Use the GitHub "production" Environment so a manual approval gate /
@@ -83,9 +81,8 @@ jobs:
         env:
           PROD_HOST: ${{ secrets.PROD_HOST }}
           PROD_USER: ${{ secrets.PROD_USER }}
-          # The exact commit that passed deploy.yaml validation (the upstream
-          # run's head); falls back to the current ref's HEAD on manual dispatch.
-          DEPLOY_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+          # The commit on main being deployed (the merge commit).
+          DEPLOY_SHA: ${{ github.sha }}
           # Where the repo lives on the VM, and where to clone it from if it
           # doesn't. github.repository is "owner/name".
           # TODO: confirm APP_DIR matches the real path on the VM.

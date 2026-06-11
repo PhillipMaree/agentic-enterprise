@@ -1,9 +1,8 @@
 name: deploy
-# No `run-name:` on purpose. When it's unset, GitHub titles the run with the
-# commit's first line (subject) automatically. An explicit
-# run-name: ${{ github.event.head_commit.message }} dumps the FULL multi-line
-# message (body + trailer) into the title, and expressions have no way to
-# trim to the first line.
+run-name: deploy ${{ github.ref_name }} · @${{ github.actor }}
+# run-name overrides GitHub's default run title (the commit subject). Use only
+# single-line fields — `github.event.head_commit.message` would dump the full
+# multi-line commit body into the title.
 
 # One workflow, many jobs. Jobs run in dependency order; downstream
 # jobs are skipped if any of their `needs:` failed (i.e. seaweedfs
@@ -19,8 +18,11 @@ name: deploy
 # reports; per-chart `changes` still decides what actually deploys.
 
 on:
+  # Validate on every branch EXCEPT main. main is validated on the PR (the
+  # required `gate` check), so merging shouldn't re-run the whole build-all —
+  # the prod-deploy workflow fires straight off the push to main instead.
   push:
-    branches: ['**']
+    branches-ignore: [main]
 
 permissions:
   contents: read
