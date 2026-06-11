@@ -1,0 +1,23 @@
+# Overrides for sealed-secrets/sealed-secrets (bitnami-labs), installed
+# directly via `--repo` into the kube-system namespace by deploy.sh.
+#
+# Chart 2.17.9 == controller appVersion 0.33.1, matched to the kubeseal CLI
+# pinned in deploy.sh / docs (v0.33.1). Keep the three in lockstep when
+# bumping — a CLI/controller skew can fail to seal/unseal.
+#
+# The controller adopts the committed dev sealing key
+# (secrets/dev/sealed-secrets-dev-keypair.yaml), which deploy.sh applies
+# into kube-system *before* this install, so committed SealedSecrets
+# decrypt deterministically in every fresh kind cluster. See docs/SECURITY.md.
+
+# kubeseal defaults to controller name `sealed-secrets-controller` in
+# `kube-system`; pin the name so the CLI's defaults just work.
+fullnameOverride: sealed-secrets-controller
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 200m
+    memory: 128Mi

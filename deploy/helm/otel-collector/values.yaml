@@ -52,17 +52,31 @@ config:
       timeout: 10s
       send_batch_size: 1024
 
+  connectors:
+    # Derive RED metrics from spans so MCP/Obot tool calls become usage metrics
+    # in Prometheus (no native per-tool metric otherwise). `tenant` comes from a
+    # span attribute set by the MCP client (from the Keycloak `tenant` claim) so
+    # the usage dashboard can partition by tenant. Mirrors config/otel-collector.
+    spanmetrics:
+      histogram:
+        explicit:
+          buckets: [5ms, 10ms, 25ms, 50ms, 100ms, 250ms, 500ms, 1s, 2.5s, 5s, 10s]
+      dimensions:
+        - name: tenant
+          default: unknown
+      metrics_flush_interval: 15s
+
   exporters:
     otlp/tempo:
-      endpoint: platform-tempo:4317
+      endpoint: agentic-enterprise-tempo:4317
       tls:
         insecure: true
     prometheusremotewrite:
-      endpoint: http://platform-prometheus-server/api/v1/write
+      endpoint: http://agentic-enterprise-prometheus-server/api/v1/write
       tls:
         insecure: true
     otlphttp/loki:
-      endpoint: http://platform-loki:3100/otlp
+      endpoint: http://agentic-enterprise-loki:3100/otlp
       tls:
         insecure: true
 
@@ -74,9 +88,13 @@ config:
       traces:
         receivers: [otlp]
         processors: [memory_limiter, batch]
-        exporters: [otlp/tempo]
+        exporters: [otlp/tempo, spanmetrics]
       metrics:
         receivers: [otlp]
+        processors: [memory_limiter, batch]
+        exporters: [prometheusremotewrite]
+      metrics/spanmetrics:
+        receivers: [spanmetrics]
         processors: [memory_limiter, batch]
         exporters: [prometheusremotewrite]
       logs:

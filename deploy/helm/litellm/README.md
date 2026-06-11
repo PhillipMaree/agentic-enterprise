@@ -1,41 +1,39 @@
-# platform-litellm
+# agentic-enterprise-litellm
 
 Umbrella chart over `berriai/litellm-helm` (pulled from
 `oci://ghcr.io/berriai/litellm-helm`).
 
 PII masking via Presidio is wired up — every prompt goes through
-`platform-presidio-analyzer` + `platform-presidio-anonymizer` before
+`agentic-enterprise-presidio-analyzer` + `agentic-enterprise-presidio-anonymizer` before
 hitting the upstream provider.
 
 ## Prereqs
 
-- `platform-postgres` + `platform-redis` + `platform-presidio` + `platform-otel-collector` installed.
-- The `litellm` database exists in platform-postgres (run once):
+- `agentic-enterprise-postgres` + `agentic-enterprise-redis` + `agentic-enterprise-presidio` + `agentic-enterprise-otel-collector` installed.
+- The `litellm` database exists in agentic-enterprise-postgres (run once):
   ```bash
-  kubectl -n agentic-platform exec deploy/platform-postgres -- \
+  kubectl -n agentic-enterprise exec deploy/agentic-enterprise-postgres -- \
     psql -U postgres -c "CREATE DATABASE litellm"
   ```
-- Secret with master key + provider keys:
-  ```bash
-  kubectl -n agentic-platform create secret generic platform-litellm-secrets \
-    --from-literal=masterkey="$(openssl rand -hex 32)" \
-    --from-literal=anthropic-api-key="$ANTHROPIC_API_KEY" \
-    --from-literal=openai-api-key="$OPENAI_API_KEY"
-  ```
+- `agentic-enterprise-litellm-secrets` (key `masterkey`) — decrypted from the committed
+  SealedSecret [deploy/sealed-secrets/litellm.sealed.yaml](../../sealed-secrets/litellm.sealed.yaml)
+  by the Sealed Secrets controller (`deploy.sh` does this automatically). The
+  kind path is **mock-only**, so no provider keys live in the cluster — real
+  Anthropic/OpenAI keys are prod-only. See [docs/SECURITY.md](../../../docs/SECURITY.md).
 
 ## Install
 
 ```bash
 helm dependency update deploy/helm/litellm
-helm install platform-litellm deploy/helm/litellm \
-  --namespace agentic-platform --create-namespace \
+helm install agentic-enterprise-litellm deploy/helm/litellm \
+  --namespace agentic-enterprise --create-namespace \
   --wait --timeout 5m
 ```
 
 ## Reach the proxy
 
 ```bash
-kubectl -n agentic-platform port-forward svc/platform-litellm 4000:4000
+kubectl -n agentic-enterprise port-forward svc/agentic-enterprise-litellm 4000:4000
 # OpenAI-compatible: http://localhost:4000/v1/chat/completions
 # UI:                http://localhost:4000/ui
 ```
@@ -43,6 +41,7 @@ kubectl -n agentic-platform port-forward svc/platform-litellm 4000:4000
 ## Uninstall
 
 ```bash
-helm uninstall platform-litellm -n agentic-platform
-kubectl -n agentic-platform delete secret platform-litellm-secrets
+helm uninstall agentic-enterprise-litellm -n agentic-enterprise
+# agentic-enterprise-litellm-secrets is owned by its SealedSecret; remove both if desired:
+kubectl -n agentic-enterprise delete sealedsecret,secret agentic-enterprise-litellm-secrets
 ```

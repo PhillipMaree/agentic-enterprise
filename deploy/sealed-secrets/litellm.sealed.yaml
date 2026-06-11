@@ -1,0 +1,13 @@
+---
+apiVersion: bitnami.com/v1alpha1
+kind: SealedSecret
+metadata:
+  name: agentic-enterprise-litellm-secrets
+  namespace: agentic-enterprise
+spec:
+  encryptedData:
+    masterkey: AgCORAAnBU4+2tw/9T8ZXw8HCBrYDpsNoix1y1xVFCiu71Ov6DuDi1z+q/DwNtfEo8P7fy+scljf0YenINVSdCkcHuTyzHHeKCGNiEk9Ys/S1dkgErytFRFMAftI60QdEUBR/vbsGX3HrBRmbO0lXB/DXDKcIEcP+E4GSquFUvfUtn1ioacX4ZC2TPdHzbrU5qTq2/TV9bZGep8RxarJNg98SEIoWc9naYsCCDMJwTMaEX1btzN1jR8jMEh50AYgKPW/RKLghaQyTKdeFikipuuIIrUsPan6/u763w/WowbaV3zrf1hDutU4rt4S5IGyMFoCbGfA9NXOuTJCpAH6/M9+/Nrlf8VlT15xZsGI3FmTLcPzQ38h9KXukVfVO8eXPsgOAfc0d0MipeqRaIOnotGp9UydnfDftWM9jErTJa9bN9K3gbvF7CZZCQ4aCaCy5s/wuYC3OZrMAaqZ21CDGgvr+ZVDCAZNTIncqyKBuPKsdwGnbSDaeoyE04pr56Wes7GIKVAiKPwcYIE3p9qbbupmGtgFH8az+obLSN6uo4FOzTUw8iA8gVAC/VSWq/8S+Dfqan5OMBH7VA1bIhgpXJ2+iIy2gW89s5rE7I/x3sFW4tqPSTFCwGo6bplWWIrBzRVenDN5Y3dSThzK4xIUaVHGkr4RG1nESZy+Fx4d29XYe/LIDGqPCFRHQj8I4/z72aS4z5rXVLjLJD2ImBY1jYHOoM55I0xHIpdB/CqI2CkSchrh5Z0j5lAR
+  template:
+    metadata:
+      name: agentic-enterprise-litellm-secrets
+      namespace: agentic-enterprise

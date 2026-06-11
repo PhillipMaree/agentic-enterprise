@@ -1,4 +1,4 @@
-# CI-only overlay for platform-litellm. Replaces the production model list
+# CI-only overlay for agentic-enterprise-litellm. Replaces the production model list
 # with `mock_response` models so the proxy returns canned text instead of
 # calling real Anthropic / OpenAI / etc. Lets CI exercise the full request
 # path (auth, presidio guardrail, postgres logging, OTel emission)
@@ -14,6 +14,10 @@ proxy_config:
       litellm_params:
         model: anthropic/claude-3-haiku
         mock_response: "hello from ci (claude-sonnet-4-6 mock)"
+    - model_name: claude-opus-4-8
+      litellm_params:
+        model: anthropic/claude-3-haiku
+        mock_response: "hello from ci (claude-opus-4-8 mock)"
     - model_name: claude-opus-4-7
       litellm_params:
         model: anthropic/claude-3-haiku
@@ -22,6 +26,14 @@ proxy_config:
       litellm_params:
         model: anthropic/claude-3-haiku
         mock_response: "hello from ci (claude-haiku-4-5 mock)"
+    - model_name: gpt-5.5
+      litellm_params:
+        model: openai/gpt-4o
+        mock_response: "hello from ci (gpt-5.5 mock)"
+    - model_name: gpt-5
+      litellm_params:
+        model: openai/gpt-4o
+        mock_response: "hello from ci (gpt-5 mock)"
     - model_name: gpt-4o
       litellm_params:
         model: openai/gpt-4o

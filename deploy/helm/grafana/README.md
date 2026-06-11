@@ -1,4 +1,4 @@
-# platform-grafana
+# agentic-enterprise-grafana
 
 Umbrella chart over `grafana/grafana`. Datasources for Tempo, Loki, and
 Prometheus are auto-provisioned with Tempo↔Loki and Tempo↔Metrics
@@ -8,15 +8,15 @@ correlations pre-wired (matches [config/grafana/provisioning/datasources/datasou
 
 ```bash
 helm dependency update deploy/helm/grafana
-helm install platform-grafana deploy/helm/grafana \
-  --namespace agentic-platform --create-namespace \
+helm install agentic-enterprise-grafana deploy/helm/grafana \
+  --namespace agentic-enterprise --create-namespace \
   --wait --timeout 5m
 ```
 
 ## Reach the UI
 
 ```bash
-kubectl -n agentic-platform port-forward svc/platform-grafana 3000:80
+kubectl -n agentic-enterprise port-forward svc/agentic-enterprise-grafana 3000:80
 # open http://localhost:3000 — admin / change-me (from values.yaml)
 ```
 
@@ -28,6 +28,6 @@ the sidecar picks it up automatically. See [the chart docs](https://github.com/g
 ## Uninstall
 
 ```bash
-helm uninstall platform-grafana -n agentic-platform
-kubectl delete pvc -l app.kubernetes.io/instance=platform-grafana -n agentic-platform
+helm uninstall agentic-enterprise-grafana -n agentic-enterprise
+kubectl delete pvc -l app.kubernetes.io/instance=agentic-enterprise-grafana -n agentic-enterprise
 ```

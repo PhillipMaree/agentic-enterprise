@@ -1,4 +1,4 @@
-# OpenTelemetry Collector — central telemetry fan-out for agentic-platform.
+# OpenTelemetry Collector — central telemetry fan-out for agentic-enterprise.
 #
 # Why a collector at all:
 #   Apps emit OTLP once. The collector handles routing per signal type to the
@@ -41,6 +41,22 @@ processors:
     timeout: 10s
     send_batch_size: 1024
 
+connectors:
+  # Derive RED metrics (request count, errors, latency histogram) from spans so
+  # MCP/Obot tool calls show up as usage metrics in Prometheus — there is no
+  # native per-tool metric otherwise. `tenant` is read from a span attribute
+  # (the MCP client sets it, e.g. from the Keycloak `tenant` claim) so the
+  # Grafana dashboard can partition by tenant. Emits `calls_total` and
+  # `duration_milliseconds_*` labelled service_name/span_name/status_code/tenant.
+  spanmetrics:
+    histogram:
+      explicit:
+        buckets: [5ms, 10ms, 25ms, 50ms, 100ms, 250ms, 500ms, 1s, 2.5s, 5s, 10s]
+    dimensions:
+      - name: tenant
+        default: unknown
+    metrics_flush_interval: 15s
+
 exporters:
   # Traces → Tempo. Use OTLP gRPC; Tempo speaks OTLP natively on 4317.
   # `insecure: true` because we're inside the compose network — no TLS.
@@ -79,9 +95,17 @@ service:
     traces:
       receivers: [otlp]
       processors: [memory_limiter, batch]
-      exporters: [otlp/tempo]
+      # Fan traces to Tempo AND the spanmetrics connector (which feeds the
+      # metrics/spanmetrics pipeline below).
+      exporters: [otlp/tempo, spanmetrics]
     metrics:
       receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [prometheusremotewrite]
+    # Span-derived RED metrics → Prometheus (separate pipeline so it doesn't
+    # re-batch the raw OTLP metrics path).
+    metrics/spanmetrics:
+      receivers: [spanmetrics]
       processors: [memory_limiter, batch]
       exporters: [prometheusremotewrite]
     logs:

@@ -20,6 +20,11 @@ model_list:
       model: anthropic/claude-sonnet-4-6
       api_key: os.environ/ANTHROPIC_API_KEY
 
+  - model_name: claude-opus-4-8
+    litellm_params:
+      model: anthropic/claude-opus-4-8
+      api_key: os.environ/ANTHROPIC_API_KEY
+
   - model_name: claude-opus-4-7
     litellm_params:
       model: anthropic/claude-opus-4-7
@@ -29,6 +34,16 @@ model_list:
     litellm_params:
       model: anthropic/claude-haiku-4-5-20251001
       api_key: os.environ/ANTHROPIC_API_KEY
+
+  - model_name: gpt-5.5
+    litellm_params:
+      model: openai/gpt-5.5
+      api_key: os.environ/OPENAI_API_KEY
+
+  - model_name: gpt-5
+    litellm_params:
+      model: openai/gpt-5
+      api_key: os.environ/OPENAI_API_KEY
 
   - model_name: gpt-4o
     litellm_params:
@@ -47,7 +62,7 @@ litellm_settings:
   require_auth_for_metrics_endpoint: false
 
   # Redis-backed response cache. Same Redis instance the rest of the
-  # platform uses; DB 1 keeps keys isolated.
+  # stack uses; DB 1 keeps keys isolated.
   cache: true
   cache_params:
     type: redis

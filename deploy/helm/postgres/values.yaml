@@ -6,10 +6,12 @@ image:
 service:
   port: 5432
 
+# NOTE: these no longer seed a Secret — the agentic-enterprise-postgres Secret is
+# decrypted from deploy/sealed-secrets/postgres.sealed.yaml (keys
+# POSTGRES_USER/PASSWORD/DB). `username` is kept only for the readiness
+# probe's `pg_isready -U <user>` and must match the sealed POSTGRES_USER.
 auth:
   username: postgres
-  password: password
-  database: mlflow
 
 persistence:
   enabled: true

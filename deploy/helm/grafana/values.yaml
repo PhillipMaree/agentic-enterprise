@@ -1,15 +1,19 @@
 # Overrides for grafana/grafana, installed directly via `--repo`.
 # Mirrors config/grafana/provisioning/datasources/datasources.yaml.
 #
-# Admin password is set inline for dev simplicity. In a real cluster
-# pull it from a Secret with `admin.existingSecret`.
+# Admin creds come from the agentic-enterprise-grafana-admin Secret (decrypted from
+# deploy/sealed-secrets/grafana.sealed.yaml), not inline values.
+# Pinned (not the chart default / :latest): newer Grafana ships the
+# experimental k8s dashboard apiserver + unified storage default-on, which
+# has no backend in this stack and hangs requests, making login take minutes.
+# Mirrors the pin in docker-compose.yaml.
+image:
+  tag: "11.6.3"
 
-# The chart's top-level keys are `adminUser` / `adminPassword` —
-# not `admin.user` / `admin.password` (that path is for an
-# externally-managed Secret pointer, not inline credentials).
-adminUser: admin
-# CHANGE THIS for any shared env. dev/kind default only.
-adminPassword: change-me
+admin:
+  existingSecret: agentic-enterprise-grafana-admin
+  userKey: admin-user
+  passwordKey: admin-password
 
 service:
   type: ClusterIP
@@ -41,7 +45,7 @@ datasources:
         access: proxy
         # The community prometheus chart exposes a service called
         # `<release>-server` on port 80.
-        url: http://platform-prometheus-server
+        url: http://agentic-enterprise-prometheus-server
         isDefault: true
         editable: false
 
@@ -49,7 +53,7 @@ datasources:
         uid: loki
         type: loki
         access: proxy
-        url: http://platform-loki:3100
+        url: http://agentic-enterprise-loki:3100
         editable: false
         jsonData:
           derivedFields:
@@ -64,7 +68,7 @@ datasources:
         access: proxy
         # The grafana/tempo chart's Service exposes the HTTP query API
         # on port 3100 (chart convention), not Tempo's vanilla 3200.
-        url: http://platform-tempo:3100
+        url: http://agentic-enterprise-tempo:3100
         editable: false
         jsonData:
           tracesToLogsV2:

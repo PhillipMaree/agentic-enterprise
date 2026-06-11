@@ -27,23 +27,22 @@ on:
         type: boolean
         default: false
 
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
-
 jobs:
   deploy:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      contents: read
     defaults:
       run:
         shell: bash
     env:
-      NAMESPACE: agentic-platform
-      RELEASE: platform-${{ inputs.chart }}
+      NAMESPACE: agentic-enterprise
+      RELEASE: agentic-enterprise-${{ inputs.chart }}
     steps:
       - uses: actions/checkout@v5
 
-      - uses: azure/setup-helm@v4
+      - uses: azure/setup-helm@v5
         with:
           version: v3.21.0
 
@@ -51,7 +50,7 @@ jobs:
         uses: helm/kind-action@v1
         with:
           config: deploy/kind/kind-config.yaml
-          cluster_name: agentic-platform
+          cluster_name: agentic-enterprise
 
       - name: Free disk space
         # The full stack pulls a lot of images. Cheap to do unconditionally.
@@ -81,3 +80,6 @@ jobs:
             echo "=== $rel ==="
             kubectl -n "$NAMESPACE" logs -l "app.kubernetes.io/instance=$rel" --all-containers --tail=100 || true
           done
+      # No fail-fast: a failed chart shows red on its own; sibling jobs run to
+      # completion so the full per-service result is visible. The `gate` job in
+      # deploy.yaml is what turns the run red if any job failed.

@@ -49,10 +49,10 @@ prometheus-pushgateway:
 extraScrapeConfigs: |
   - job_name: otel-collector
     static_configs:
-      - targets: ["platform-otel-collector:8888"]
+      - targets: ["agentic-enterprise-otel-collector:8888"]
   - job_name: litellm
     # Trailing slash: LiteLLM redirects /metrics → /metrics/ (307),
     # Prometheus doesn't follow scrape redirects.
     metrics_path: /metrics/
     static_configs:
-      - targets: ["platform-litellm:4000"]
+      - targets: ["agentic-enterprise-litellm:4000"]

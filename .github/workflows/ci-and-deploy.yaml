@@ -1,0 +1,127 @@
+name: CI and deploy
+
+# Production promotion only. Validation is owned by deploy.yaml (the build-all
+# `gate` job). This workflow SSHes into the remote k3s VM and deploys there —
+# ONLY after deploy.yaml completes successfully on `main`.
+#
+#   workflow_run (deploy succeeded on main) → deploy-prod (the validated SHA)
+#   workflow_dispatch                       → deploy-prod (manual promote)
+#
+# deploy-prod joins the tailnet with an ephemeral Tailscale node, SSHes into
+# the remote k3s VM, checks out the EXACT commit that passed validation, and
+# runs the deploy there. The Kubernetes API is never exposed publicly — all
+# kubectl/helm runs locally on the VM, reached only over Tailscale + SSH.
+
+on:
+  # Promote after deploy.yaml's build-all `gate` goes green on main.
+  workflow_run:
+    workflows: [deploy]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One prod deploy at a time. Don't cancel a running production deploy.
+concurrency:
+  group: ci-and-deploy-prod
+  cancel-in-progress: false
+
+jobs:
+  # ----- deploy-prod: SSH into the remote k3s VM over Tailscale ------------
+  # Validation lives in deploy.yaml (build-all + `gate`). This job only runs
+  # when that workflow finished successfully on main (workflow_run), or on a
+  # manual workflow_dispatch. A failed validation never reaches here.
+  deploy-prod:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Use the GitHub "production" Environment so a manual approval gate /
+    # protection rules / scoped secrets can be layered on later.
+    environment: production
+    defaults:
+      run:
+        shell: bash
+    steps:
+      # Join the tailnet with a short-lived, tagged node. The node is torn
+      # down when the job ends. Reaches the VM at its 100.x tailnet address.
+      - name: Connect to Tailscale
+        uses: tailscale/github-action@v4
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci
+
+      - name: Configure SSH
+        env:
+          PROD_HOST: ${{ secrets.PROD_HOST }}
+          # Never echoed: written straight into a 0600 file, then discarded
+          # with the runner. ssh-keyscan pins the host key into known_hosts so
+          # StrictHostKeyChecking stays ON (default) — we don't disable it.
+          PROD_SSH_KEY: ${{ secrets.PROD_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$PROD_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          # The tailnet route may take a moment to come up after `tailscale up`;
+          # retry the keyscan instead of failing on the first miss.
+          for i in 1 2 3 4 5; do
+            if ssh-keyscan -T 10 "$PROD_HOST" >> ~/.ssh/known_hosts 2>/dev/null; then
+              echo "host key collected for $PROD_HOST"
+              break
+            fi
+            echo "ssh-keyscan attempt $i failed; retrying..."
+            sleep 5
+          done
+          test -s ~/.ssh/known_hosts
+
+      - name: Deploy to k3s VM
+        env:
+          PROD_HOST: ${{ secrets.PROD_HOST }}
+          PROD_USER: ${{ secrets.PROD_USER }}
+          # The exact commit that passed deploy.yaml validation (the upstream
+          # run's head); falls back to the current ref's HEAD on manual dispatch.
+          DEPLOY_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+          # Where the repo lives on the VM, and where to clone it from if it
+          # doesn't. github.repository is "owner/name".
+          # TODO: confirm APP_DIR matches the real path on the VM.
+          APP_DIR: /opt/agentic-enterprise
+          REPO_URL: https://github.com/${{ github.repository }}.git
+        run: |
+          set -euo pipefail
+          # Run the deploy on the VM. The remote script is quoted ('REMOTE') so
+          # nothing expands locally; values are passed as positional args. The
+          # VM runs kubectl/helm against its own k3s — the API never leaves it.
+          ssh -i ~/.ssh/deploy_key \
+              -o IdentitiesOnly=yes \
+              "$PROD_USER@$PROD_HOST" \
+              'bash -s' -- "$DEPLOY_SHA" "$APP_DIR" "$REPO_URL" <<'REMOTE'
+          set -euo pipefail
+          SHA="$1"
+          APP_DIR="$2"
+          REPO_URL="$3"
+
+          echo "==> verifying k3s access"
+          kubectl get nodes
+
+          echo "==> syncing repo at $APP_DIR to $SHA"
+          if [ ! -d "$APP_DIR/.git" ]; then
+            # Private repo: the VM needs read access (deploy key or a token in
+            # the clone URL). TODO: ensure the VM is authorized to clone.
+            git clone "$REPO_URL" "$APP_DIR"
+          fi
+          cd "$APP_DIR"
+          git fetch origin
+          git checkout "$SHA"
+          git reset --hard "$SHA"
+
+          echo "==> deploying $SHA to k3s"
+          # Prod-only deploy: reuses deploy.sh's Helm charts against the VM's
+          # k3s context (never kind, never the dev sealing key). See the script
+          # header and the README 'Production deploy' section.
+          ./scripts/deploy-prod.sh
+          REMOTE

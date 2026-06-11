@@ -2,10 +2,10 @@
 # installed directly. Mirrors config/litellm/config.yaml.
 #
 # Prereqs handled by deploy.sh:
-#   - platform-postgres, platform-redis, platform-presidio,
-#     platform-otel-collector all installed (HARD_DEPS)
+#   - agentic-enterprise-postgres, agentic-enterprise-redis, agentic-enterprise-presidio,
+#     agentic-enterprise-otel-collector all installed (HARD_DEPS)
 #   - `litellm` database created in postgres (bootstrap_litellm_db hook)
-#   - `platform-litellm-secrets` Secret with masterkey + provider keys
+#   - `agentic-enterprise-litellm-secrets` Secret with masterkey + provider keys
 #     (create_litellm_secret hook)
 
 replicaCount: 1
@@ -19,19 +19,19 @@ service:
   type: ClusterIP
   port: 4000
 
-# Use existing platform-postgres rather than the bundled standalone DB.
+# Use existing agentic-enterprise-postgres rather than the bundled standalone DB.
 # Secret keys come from our postgres chart: POSTGRES_USER / POSTGRES_PASSWORD.
 db:
   deployStandalone: false
   useExisting: true
-  endpoint: platform-postgres:5432
+  endpoint: agentic-enterprise-postgres:5432
   database: litellm
   secret:
-    name: platform-postgres
+    name: agentic-enterprise-postgres
     usernameKey: POSTGRES_USER
     passwordKey: POSTGRES_PASSWORD
 
-# Disable the BUNDLED redis subchart — we use the existing platform-redis
+# Disable the BUNDLED redis subchart — we use the existing agentic-enterprise-redis
 # release. Connection info goes via the proxy_config.cache_params block
 # above, NOT via this `redis:` block (that one controls the subchart).
 redis:
@@ -43,6 +43,10 @@ proxy_config:
       litellm_params:
         model: anthropic/claude-sonnet-4-6
         api_key: os.environ/ANTHROPIC_API_KEY
+    - model_name: claude-opus-4-8
+      litellm_params:
+        model: anthropic/claude-opus-4-8
+        api_key: os.environ/ANTHROPIC_API_KEY
     - model_name: claude-opus-4-7
       litellm_params:
         model: anthropic/claude-opus-4-7
@@ -51,6 +55,14 @@ proxy_config:
       litellm_params:
         model: anthropic/claude-haiku-4-5-20251001
         api_key: os.environ/ANTHROPIC_API_KEY
+    - model_name: gpt-5.5
+      litellm_params:
+        model: openai/gpt-5.5
+        api_key: os.environ/OPENAI_API_KEY
+    - model_name: gpt-5
+      litellm_params:
+        model: openai/gpt-5
+        api_key: os.environ/OPENAI_API_KEY
     - model_name: gpt-4o
       litellm_params:
         model: openai/gpt-4o
@@ -63,7 +75,7 @@ proxy_config:
     cache: true
     cache_params:
       type: redis
-      host: platform-redis
+      host: agentic-enterprise-redis
       port: 6379
       db: 1
 
@@ -80,28 +92,42 @@ proxy_config:
   general_settings:
     store_model_in_db: true
 
-masterkeySecretName: platform-litellm-secrets
+masterkeySecretName: agentic-enterprise-litellm-secrets
 masterkeySecretKey: masterkey
 
 extraEnvVars:
+  # Stop the PROXY from running `prisma migrate deploy` on startup. The
+  # migrationJob (made a Helm pre-install/pre-upgrade hook below) is the single
+  # migrator and runs to completion BEFORE the proxy starts; with the old
+  # concurrent setup the two raced and deadlocked on Postgres advisory locks
+  # ("deadlock detected ... ApplyMigrations"), stalling readiness and flaking
+  # the e2e smoke. The proxy ships a pre-generated Prisma client, so it only
+  # needs the schema to already exist — the hook Job guarantees that.
+  #
+  # Note: the chart appends extraEnvVars to BOTH the proxy and the migration
+  # Job, but the Job template force-appends `DISABLE_SCHEMA_UPDATE=false` as its
+  # LAST env entry to always migrate, so this only takes effect on the proxy.
+  # (The Job logs a harmless duplicate-env warning as a result.)
+  - name: DISABLE_SCHEMA_UPDATE
+    value: "true"
   - name: PRESIDIO_ANALYZER_API_BASE
-    value: http://platform-presidio-analyzer:3000
+    value: http://agentic-enterprise-presidio-analyzer:3000
   - name: PRESIDIO_ANONYMIZER_API_BASE
-    value: http://platform-presidio-anonymizer:3000
+    value: http://agentic-enterprise-presidio-anonymizer:3000
   - name: OTEL_EXPORTER_OTLP_ENDPOINT
-    value: http://platform-otel-collector-opentelemetry-collector:4317
+    value: http://agentic-enterprise-otel-collector-opentelemetry-collector:4317
   - name: OTEL_SERVICE_NAME
     value: litellm
   - name: ANTHROPIC_API_KEY
     valueFrom:
       secretKeyRef:
-        name: platform-litellm-secrets
+        name: agentic-enterprise-litellm-secrets
         key: anthropic-api-key
         optional: true
   - name: OPENAI_API_KEY
     valueFrom:
       secretKeyRef:
-        name: platform-litellm-secrets
+        name: agentic-enterprise-litellm-secrets
         key: openai-api-key
         optional: true
 
@@ -114,3 +140,28 @@ resources:
     # LiteLLM proxy itself takes ~1.5Gi resident on startup; 1Gi gets it
     # OOM-killed before the readiness probe can succeed.
     memory: 3Gi
+
+# The Prisma schema-migration Job. Upstream leaves this BestEffort
+# (resources: {}), so during a full `deploy.sh --up` — when every chart
+# installs at once and the node is briefly memory-contended — the kernel
+# OOM-killer evicts it first (exitCode 137 / OOMKilled). A memory request
+# lifts it to Burstable QoS (no longer first victim, reserved headroom); the
+# limit gives `prisma migrate`/`generate` room to spike.
+migrationJob:
+  # Run the migration as a Helm pre-install/pre-upgrade hook so it completes
+  # BEFORE the proxy Deployment is applied. The chart's default ordering hint
+  # is an ArgoCD PreSync hook (hooks.argocd) — but we deploy with Helm, which
+  # ignores that annotation, so by default the Job runs CONCURRENTLY with the
+  # proxy and both race to migrate (see DISABLE_SCHEMA_UPDATE above). Switching
+  # to the Helm hook serialises it: migrate to completion, then start the proxy.
+  hooks:
+    helm:
+      enabled: true
+    argocd:
+      enabled: false
+  resources:
+    requests:
+      cpu: 100m
+      memory: 512Mi
+    limits:
+      memory: 2Gi

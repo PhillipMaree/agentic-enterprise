@@ -1,16 +1,18 @@
-# agentic-platform
+# agentic-enterprise
 
-End-to-end local development platform for agentic AI: an LLM gateway with
+End-to-end local development stack for agentic AI: an LLM gateway with
 built-in PII masking, an MCP tool federation gateway, experiment tracking,
-and a full traces/logs/metrics observability stack — all glued together so
-an agentic app needs to know about one ingress (LiteLLM) and one telemetry
-egress (OTel Collector) and nothing else.
+a full traces/logs/metrics observability stack, and a Keycloak identity
+provider for OIDC auth (with token exchange across the agent chain) — all
+glued together so an agentic app needs to know about one ingress (LiteLLM),
+one telemetry egress (OTel Collector), and one IdP (Keycloak), and nothing
+else.
 
 Two consumption surfaces, both running the same set of services:
 
 - **Docker Compose** — fastest local loop. `docker compose up -d`.
-- **Helm charts** — one chart per service, all named `platform-<svc>`,
-  installed into the `agentic-platform` namespace of a local
+- **Helm charts** — one chart per service, all named `agentic-enterprise-<svc>`,
+  installed into the `agentic-enterprise` namespace of a local
   [kind](https://kind.sigs.k8s.io/) cluster.
 
 > Dev-only. Auth is off or set to defaults. Do not point any of this at a
@@ -18,21 +20,21 @@ Two consumption surfaces, both running the same set of services:
 
 ## Architecture
 
-![agentic-platform architecture](docs/img/architecture.png)
-
-<details>
-<summary>Mermaid source (re-render with <code>mmdc -i README.md -o docs/img/architecture.png</code> or view via the GitHub renderer)</summary>
-
 ```mermaid
+%%{init: {'theme': 'dark'}}%%
 flowchart TB
     subgraph clients [Agentic apps]
         app[Your agent / workflow]
     end
 
+    subgraph authz [Auth]
+        keycloak[Keycloak IdP :18080]
+    end
+
     subgraph data [Data plane]
         direction LR
         litellm[LiteLLM proxy :4000]
-        mcp[Obot MCP Gateway :8090]
+        mcp[Obot MCP Gateway + Registry :8080]
         presidio_a[Presidio analyzer]
         presidio_o[Presidio anonymizer]
     end
@@ -58,6 +60,7 @@ flowchart TB
         seaweedfs[(SeaweedFS S3 :8333)]
     end
 
+    app -->|OIDC login + token exchange| keycloak
     app -->|chat completions| litellm
     app -->|tool calls| mcp
     app -.->|OTLP| otel
@@ -82,28 +85,90 @@ flowchart TB
     grafana --> loki
     grafana --> prom
 
-    classDef dataplane fill:#e1f5ff,stroke:#0288d1,color:#01579b
-    classDef telemetryplane fill:#fff4e1,stroke:#f57c00,color:#e65100
-    classDef trackingplane fill:#f0e8ff,stroke:#7e57c2,color:#4527a0
-    classDef infraplane fill:#e8f5e9,stroke:#388e3c,color:#1b5e20
+    classDef dataplane fill:#0d3b66,stroke:#4fc3f7,color:#e1f5ff
+    classDef telemetryplane fill:#5a3000,stroke:#ffb74d,color:#fff3e0
+    classDef trackingplane fill:#311b6b,stroke:#b39ddb,color:#ede7f6
+    classDef infraplane fill:#14401a,stroke:#81c784,color:#e8f5e9
+    classDef authplane fill:#4a1530,stroke:#f48fb1,color:#fce4ec
 
     class litellm,mcp,presidio_a,presidio_o dataplane
     class otel,tempo,loki,prom,grafana telemetryplane
     class mlflow trackingplane
     class redis,postgres,falkordb,seaweedfs infraplane
+    class keycloak authplane
 ```
-
-</details>
 
 **Reading the diagram**
 
 - Solid arrows are request-path (synchronous: PII redaction, cache, DB writes, S3 puts).
 - Dotted arrows are OTLP telemetry (asynchronous, fire-and-forget).
 - The **agentic app's only required outbound surfaces** are LiteLLM (LLM calls),
-  the MCP gateway (tools), and the OTel collector (telemetry). Everything
-  else is internal to the platform.
+  the MCP gateway (tools), the OTel collector (telemetry), and Keycloak (OIDC
+  login + token exchange). Everything else is internal to the stack.
+- **Keycloak is the IdP**: the browser logs in against the `agentic-dev` realm,
+  and the agent chain exchanges tokens client-to-client (see the
+  [chart README](deploy/helm/keycloak/README.md) for the realm's clients and
+  the `tenant` claim that scopes the FalkorDB graph).
 - **SeaweedFS is the S3 backend for everything**: MLflow artifacts, Tempo
   trace blocks, Loki chunks + index. One object store, four buckets.
+- **Obot is both a tool gateway and a registry**: alongside proxying tool
+  calls it serves a read-only, MCP-spec registry API at `/v0.1/servers`
+  (cursor-paginated, `search`/`limit` query params) so clients can discover
+  the MCP servers it manages. Dev runs in **no-auth mode**
+  (`OBOT_SERVER_AUTH_REGISTRY_REQUIRE_AUTH=false`), exposing servers granted
+  to all users; flip auth on to scope discovery per identity. See the
+  [chart README](deploy/helm/obot/README.md).
+
+## Tenant attribution
+
+Usage is partitioned per tenant so one dashboard can break LLM and MCP
+consumption down by the agentic client that drove it. Telemetry can only be
+sliced by a label it actually carries, so the **client is responsible for
+stamping its tenant onto every call** — nothing reads the JWT and labels
+metrics for you. The tenant identity originates as the Keycloak `tenant`
+claim (the same one that scopes the FalkorDB graph); the client reads it from
+its token and forwards it on two surfaces.
+
+**LLM usage → LiteLLM team.** Tenant maps to a LiteLLM *team*: the client
+calls LiteLLM with a team-scoped virtual key, and LiteLLM automatically tags
+its Prometheus metrics with `team` / `team_alias`. Provision once per tenant
+(via the admin UI at `:14000/ui` or the API):
+
+```bash
+# 1. a team per tenant
+curl -sS http://localhost:14000/team/new \
+  -H "Authorization: Bearer $LITELLM_MASTER_KEY" -H 'Content-Type: application/json' \
+  -d '{"team_alias":"acme"}'                          # -> returns team_id
+
+# 2. a virtual key bound to that team
+curl -sS http://localhost:14000/key/generate \
+  -H "Authorization: Bearer $LITELLM_MASTER_KEY" -H 'Content-Type: application/json' \
+  -d '{"team_id":"<team_id>"}'                         # -> returns sk-... key
+```
+
+The client then sends chat completions with `Authorization: Bearer sk-...`
+(the per-tenant key) instead of the master key. No per-request work — the
+`team` label rides on every usage metric.
+
+**MCP usage → `tenant` telemetry attribute.** MCP tool calls have no native
+per-tenant metric, so the client's OpenTelemetry SDK must carry the tenant on
+its spans. The simplest mechanism is a resource attribute set once at startup:
+
+```bash
+OTEL_RESOURCE_ATTRIBUTES=tenant=acme,service.name=my-agent
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:14318    # the OTel collector (HTTP)
+```
+
+(or set `tenant` as a span attribute on each tool-call span). The OTel
+Collector's [`spanmetrics` connector](config/otel-collector/config.yaml)
+derives request/error/latency metrics from those spans with `tenant` as a
+dimension, so MCP usage lands in Prometheus alongside the LLM metrics.
+
+Both feed the **Agentic Usage Overview** dashboard
+([config/grafana/provisioning/dashboards/agentic-usage-overview.json](config/grafana/provisioning/dashboards/agentic-usage-overview.json)),
+whose `$tenant` variable (sourced from the `team` label) filters every panel.
+This is a *visual* partition — anyone with Grafana access can switch tenants;
+it is not data-path isolation.
 
 ## Getting Started
 
@@ -120,14 +185,23 @@ services reachable on `localhost`, with the same credentials.
 | `kubectl` | — | required |
 | [Helm](https://helm.sh/) 3.15+ | — | required |
 | `aws` CLI | — | one-time bucket bootstrap |
+| [`kubeseal`](https://github.com/bitnami-labs/sealed-secrets) | — | only to (re)seal secrets (`--seal`), not for `--up` |
 
 All credentials default to dev-only values (`admin` / `password` / `any`).
-Override anything that matters via `.env` (Compose) or a Kubernetes Secret.
+On the Kubernetes path they are stored as **Sealed Secrets** (encrypted,
+committed to git, decrypted in-cluster by a controller); on Compose, admin
+passwords are file-based secrets under `secrets/compose/`. Real LLM provider
+keys never enter the kind cluster or git — see [docs/SECURITY.md](docs/SECURITY.md).
 
 ### Path A — Docker Compose (fast local loop)
 
 ```bash
-docker compose up -d                            # 14 services, ~60s to settle
+# Bootstrap file-based secrets (postgres/keycloak/grafana admin passwords).
+for f in postgres_password keycloak_admin_password grafana_admin_password; do
+  cp "secrets/compose/$f.example" "secrets/compose/$f"
+done
+
+docker compose up -d                            # 15 services, ~60s to settle
 docker compose ps                               # all should be healthy or "Up"
 ```
 
@@ -139,19 +213,19 @@ Try it:
 
 ```bash
 # Chat completion (no real provider needed — uses mock_response when keys are blank)
-curl -sS http://localhost:4000/v1/chat/completions \
+curl -sS http://localhost:14000/v1/chat/completions \
   -H "Authorization: Bearer sk-dev-master-key-change-me-not-a-secret" \
   -H "Content-Type: application/json" \
   -d '{"model":"claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}]}'
 
-# Grafana (admin / admin)
-open http://localhost:3001
+# Grafana (admin / password)
+open http://localhost:13001
 
 # LiteLLM admin UI (admin / password)
-open http://localhost:4000/ui
+open http://localhost:14000/ui
 
 # MLflow
-open http://localhost:5000
+open http://localhost:15000
 ```
 
 Tear down:
@@ -188,20 +262,24 @@ provisioning a real cluster. All orchestration is wrapped in
 
 The script:
 
-- reuses an existing `agentic-platform` kind cluster if present
+- reuses an existing `agentic-enterprise` kind cluster if present
+- installs the **Sealed Secrets controller** into `kube-system` (adopting the
+  committed dev sealing key in `secrets/dev/`), then applies the committed
+  `SealedSecret`s in [deploy/sealed-secrets/](deploy/sealed-secrets/) — they
+  decrypt into the `agentic-enterprise-*` Secrets the charts consume (postgres, keycloak
+  admin, grafana admin, litellm masterkey, S3 creds)
 - runs `helm dependency update` + extracts subchart tarballs (Helm 3.21+
   requires deps unpacked into `charts/<name>/`, not just present as `.tgz`)
 - bootstraps SeaweedFS buckets as an in-cluster Job (no host `aws` CLI
-  needed), creates the `litellm` Postgres database, and creates the
-  `platform-litellm-secrets` Secret automatically
+  needed) and creates the `litellm` Postgres database
 - uses `helm upgrade --install` so re-running is safe
 
 Try it (run each port-forward in its own terminal):
 
 ```bash
-kubectl -n agentic-platform port-forward svc/platform-litellm 4000:4000
-kubectl -n agentic-platform port-forward svc/platform-grafana 3000:80
-kubectl -n agentic-platform port-forward svc/platform-mlflow  5000:5000
+kubectl -n agentic-enterprise port-forward svc/agentic-enterprise-litellm 4000:4000
+kubectl -n agentic-enterprise port-forward svc/agentic-enterprise-grafana 3000:80
+kubectl -n agentic-enterprise port-forward svc/agentic-enterprise-mlflow  5000:5000
 ```
 
 <details>
@@ -209,8 +287,17 @@ kubectl -n agentic-platform port-forward svc/platform-mlflow  5000:5000
 
 ```bash
 # 1. Cluster + namespace
-kind create cluster --config deploy/kind/kind-config.yaml --name agentic-platform
-kubectl create namespace agentic-platform
+kind create cluster --config deploy/kind/kind-config.yaml --name agentic-enterprise
+kubectl create namespace agentic-enterprise
+
+# 1b. Sealed Secrets: adopt the committed dev key, install the controller,
+#     then apply the committed SealedSecrets (they decrypt into agentic-enterprise-* Secrets).
+kubectl apply -f secrets/dev/sealed-secrets-dev-keypair.yaml
+helm -n kube-system upgrade --install sealed-secrets sealed-secrets \
+  --repo https://bitnami-labs.github.io/sealed-secrets --version 2.17.9 \
+  -f deploy/helm/sealed-secrets/values.yaml --wait
+kubectl -n kube-system rollout status deploy/sealed-secrets-controller
+kubectl apply -f deploy/sealed-secrets/
 
 # 2. For every chart with subchart deps: update + extract
 for c in seaweedfs tempo loki prometheus grafana otel-collector mlflow litellm; do
@@ -219,30 +306,27 @@ for c in seaweedfs tempo loki prometheus grafana otel-collector mlflow litellm; 
 done
 
 # 3. Shared infrastructure
-helm install platform-seaweedfs deploy/helm/seaweedfs -n agentic-platform --wait --timeout 5m
-helm install platform-redis     deploy/helm/redis     -n agentic-platform --wait --timeout 5m
-helm install platform-postgres  deploy/helm/postgres  -n agentic-platform --wait --timeout 5m
-helm install platform-falkordb  deploy/helm/falkordb  -n agentic-platform --wait --timeout 5m
+helm install agentic-enterprise-seaweedfs deploy/helm/seaweedfs -n agentic-enterprise --wait --timeout 5m
+helm install agentic-enterprise-redis     deploy/helm/redis     -n agentic-enterprise --wait --timeout 5m
+helm install agentic-enterprise-postgres  deploy/helm/postgres  -n agentic-enterprise --wait --timeout 5m
+helm install agentic-enterprise-falkordb  deploy/helm/falkordb  -n agentic-enterprise --wait --timeout 5m
 
 # 4. Bootstrap (buckets via in-cluster Job + litellm DB)
 # (see bootstrap_buckets / bootstrap_litellm_db in deploy.sh)
 
 # 5. Telemetry + tracking
-helm install platform-tempo          deploy/helm/tempo          -n agentic-platform --wait --timeout 5m
-helm install platform-loki           deploy/helm/loki           -n agentic-platform --wait --timeout 8m
-helm install platform-prometheus     deploy/helm/prometheus     -n agentic-platform --wait --timeout 5m
-helm install platform-grafana        deploy/helm/grafana        -n agentic-platform --wait --timeout 5m
-helm install platform-otel-collector deploy/helm/otel-collector -n agentic-platform --wait --timeout 5m
-helm install platform-mlflow         deploy/helm/mlflow         -n agentic-platform --wait --timeout 8m
+helm install agentic-enterprise-tempo          deploy/helm/tempo          -n agentic-enterprise --wait --timeout 5m
+helm install agentic-enterprise-loki           deploy/helm/loki           -n agentic-enterprise --wait --timeout 8m
+helm install agentic-enterprise-prometheus     deploy/helm/prometheus     -n agentic-enterprise --wait --timeout 5m
+helm install agentic-enterprise-grafana        deploy/helm/grafana        -n agentic-enterprise --wait --timeout 5m
+helm install agentic-enterprise-otel-collector deploy/helm/otel-collector -n agentic-enterprise --wait --timeout 5m
+helm install agentic-enterprise-mlflow         deploy/helm/mlflow         -n agentic-enterprise --wait --timeout 8m
 
-# 6. Data plane
-helm install platform-presidio    deploy/helm/presidio    -n agentic-platform --wait --timeout 5m
-helm install platform-obot         deploy/helm/obot         -n agentic-platform --wait --timeout 8m
-kubectl -n agentic-platform create secret generic platform-litellm-secrets \
-  --from-literal=masterkey="$(openssl rand -hex 32)" \
-  --from-literal=anthropic-api-key="${ANTHROPIC_API_KEY:-}" \
-  --from-literal=openai-api-key="${OPENAI_API_KEY:-}"
-helm install platform-litellm deploy/helm/litellm -n agentic-platform --wait --timeout 10m
+# 6. Data plane (agentic-enterprise-litellm-secrets already exists from step 1b — its
+#    masterkey is sealed; the kind path is mock-only so no provider keys here)
+helm install agentic-enterprise-presidio    deploy/helm/presidio    -n agentic-enterprise --wait --timeout 5m
+helm install agentic-enterprise-obot         deploy/helm/obot         -n agentic-enterprise --wait --timeout 8m
+helm install agentic-enterprise-litellm deploy/helm/litellm -n agentic-enterprise --wait --timeout 10m
 ```
 
 </details>
@@ -255,6 +339,7 @@ helm install platform-litellm deploy/helm/litellm -n agentic-platform --wait --t
 | Infra | Redis | KV + JSON + Search (LangGraph checkpointer, LiteLLM cache) | `redis:latest` (Redis 8) | [deploy/helm/redis/](deploy/helm/redis/) |
 | Infra | Postgres | Relational store (LiteLLM usage, MLflow, LangGraph) | `postgres:latest` | [deploy/helm/postgres/](deploy/helm/postgres/) |
 | Infra | FalkorDB | Property-graph DB (GraphRAG) | `falkordb/falkordb:latest` | [deploy/helm/falkordb/](deploy/helm/falkordb/) |
+| Auth | Keycloak | OIDC IdP + token exchange for the agent chain (`agentic-dev` realm) | `quay.io/keycloak/keycloak:26.1` | [deploy/helm/keycloak/](deploy/helm/keycloak/) |
 | Data | LiteLLM | OpenAI-compatible LLM proxy + Presidio PII masking | `ghcr.io/berriai/litellm:main-stable` | [deploy/helm/litellm/](deploy/helm/litellm/) |
 | Data | Presidio (analyzer + anonymizer) | PII detection + redaction sidecars for LiteLLM | `mcr.microsoft.com/presidio-{analyzer,anonymizer}` | [deploy/helm/presidio/](deploy/helm/presidio/) |
 | Data | Obot | MCP gateway + registry + chat UI; deploys MCP servers as k8s workloads | `ghcr.io/obot-platform/obot:latest` | [deploy/helm/obot/](deploy/helm/obot/) |
@@ -267,25 +352,33 @@ helm install platform-litellm deploy/helm/litellm -n agentic-platform --wait --t
 
 ## Ports (host → container)
 
+Compose publishes every service on a **`1xxxx`** host port (the well-known
+port prefixed with `1`). This deliberately avoids the standard ports so the
+Compose stack and the kind port-forwards (which use the plain ports — `4000`,
+`5000`, `3000`…) can run side by side without clashing. Container ports are
+unchanged; this only affects what you type on `localhost`.
+
 | Host | Service | What it is |
 | ---: | --- | --- |
-| 9333 | seaweedfs | SeaweedFS master |
-| 8080 | seaweedfs | SeaweedFS volume |
-| 8888 | seaweedfs | SeaweedFS filer |
-| 8333 | seaweedfs | SeaweedFS S3 gateway |
-| 6379 | redis | Redis (RESP) |
-| 5432 | postgres | Postgres |
-| 6380 | falkordb | FalkorDB (RESP, graph) |
-| 3000 | falkordb | FalkorDB Browser UI |
-| 4000 | litellm | LiteLLM proxy + UI |
-| 8090 | obot | Obot MCP Gateway + UI (container port 8080) |
-| 5000 | mlflow | MLflow UI + API |
-| 4317 | otel-collector | OTLP gRPC |
-| 4318 | otel-collector | OTLP HTTP |
-| 3200 | tempo | Tempo query API |
-| 3100 | loki | Loki push + query API |
-| 9090 | prometheus | Prometheus UI + remote-write |
-| 3001 | grafana | Grafana UI (3000 is taken by falkordb) |
+| 19333 | seaweedfs | SeaweedFS master |
+| 19080 | seaweedfs | SeaweedFS volume (18080 taken by keycloak) |
+| 18888 | seaweedfs | SeaweedFS filer |
+| 18333 | seaweedfs | SeaweedFS S3 gateway |
+| 16379 | redis | Redis (RESP) |
+| 15432 | postgres | Postgres |
+| 16380 | falkordb | FalkorDB (RESP, graph) |
+| 13000 | falkordb | FalkorDB Browser UI |
+| 18080 | keycloak | Keycloak OIDC IdP |
+| 14000 | litellm | LiteLLM proxy + UI |
+| 18090 | obot | Obot MCP Gateway + Registry + UI (container port 8080) |
+| 15000 | mlflow | MLflow UI + API |
+| 14317 | otel-collector | OTLP gRPC |
+| 14318 | otel-collector | OTLP HTTP |
+| 18889 | otel-collector | Collector /metrics (container 8888) |
+| 13200 | tempo | Tempo query API |
+| 13100 | loki | Loki push + query API |
+| 19090 | prometheus | Prometheus UI + remote-write |
+| 13001 | grafana | Grafana UI (13000 taken by falkordb) |
 
 ## Config files
 
@@ -298,6 +391,7 @@ helm install platform-litellm deploy/helm/litellm -n agentic-platform --wait --t
 | [config/grafana/provisioning/](config/grafana/provisioning/) | volume mount | mirrored in [grafana/values.yaml](deploy/helm/grafana/values.yaml) | Datasources + dashboards |
 | [config/litellm/config.yaml](config/litellm/config.yaml) | volume mount | mirrored in [litellm/values.yaml](deploy/helm/litellm/values.yaml) | Model list + PII callback + cache |
 | [config/seaweedfs-init/buckets.sh](config/seaweedfs-init/buckets.sh) | run by `seaweedfs-init` service | document only (see below) | One-shot bucket bootstrap |
+| [deploy/helm/keycloak/realm-agentic-dev.json](deploy/helm/keycloak/realm-agentic-dev.json) | volume mount | configmap via `.Files.Get` | Keycloak `agentic-dev` realm: clients, scopes, token-exchange, demo users. Single source — both surfaces read the same file (not dual-stated). |
 
 > **Implication of the dual-config layout.** Configs live in two places by
 > design: `config/*` are bind-mounted into Compose containers; the same
@@ -317,13 +411,18 @@ see [.env.example](.env.example) for the full list with comments).
 | `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` | `postgres` / `password` / `mlflow` | Compose | Shared Postgres for LiteLLM + MLflow |
 | `S3_ACCESS_KEY` / `S3_SECRET_KEY` | `any` / `any` | Compose | Must match the identities in [config/seaweedfs/s3-identities.json](config/seaweedfs/s3-identities.json) |
 | `LITELLM_MASTER_KEY` | `sk-dev-master-key-change-me-not-a-secret` | Compose | Bearer token clients send to LiteLLM |
-| `LITELLM_UI_USERNAME` / `LITELLM_UI_PASSWORD` | `admin` / `password` | Compose | Admin UI login at `:4000/ui` |
-| `GRAFANA_ADMIN_PASSWORD` | `admin` | Compose | Grafana admin password at `:3001` |
-| `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` | empty | Compose | Upstream provider keys; leave blank to use `mock_response` |
+| `LITELLM_UI_USERNAME` / `LITELLM_UI_PASSWORD` | `admin` / `password` | Compose | Admin UI login at `:14000/ui` |
+| `KEYCLOAK_ADMIN_USERNAME` | `admin` | Compose | Keycloak bootstrap admin user at `:18080` |
+| `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` | empty | Compose | Upstream provider keys; leave blank to use `mock_response`. Local-only — never enter the kind cluster |
 
-For Helm, credentials go into a Kubernetes Secret instead of `.env` — see
-[deploy/helm/litellm/README.md](deploy/helm/litellm/README.md) and
-[deploy/helm/grafana/values.yaml](deploy/helm/grafana/values.yaml).
+The **keycloak** and **grafana** admin passwords (and the Postgres server
+password) are no longer env vars — they are file-based secrets under
+`secrets/compose/` (copy the `*.example` files to bootstrap). See
+[docs/SECURITY.md](docs/SECURITY.md).
+
+For Helm, credentials are **Sealed Secrets** (encrypted, committed, decrypted
+in-cluster) — see [docs/SECURITY.md](docs/SECURITY.md) and
+[deploy/sealed-secrets/](deploy/sealed-secrets/).
 
 ## Chart-level READMEs
 
@@ -334,6 +433,9 @@ Each Helm chart has its own README with prerequisites and per-service options:
 - [Redis](deploy/helm/redis/README.md)
 - [Postgres](deploy/helm/postgres/README.md)
 - [FalkorDB](deploy/helm/falkordb/README.md)
+
+**Auth**
+- [Keycloak](deploy/helm/keycloak/README.md)
 
 **Data**
 - [LiteLLM](deploy/helm/litellm/README.md)
@@ -352,18 +454,19 @@ Each Helm chart has its own README with prerequisites and per-service options:
 
 ## CI
 
-**One workflow per push**, with parallel chart-deploy jobs inside it.
-[deploy.yaml](.github/workflows/deploy.yaml) is the only trigger
-workflow; it computes which charts changed using
-[`dorny/paths-filter`](https://github.com/dorny/paths-filter), then
-chains chart jobs in **dependency order**:
+**One workflow per push** that builds **every service** in dependency
+layers — parallel where independent.
+[deploy.yaml](.github/workflows/deploy.yaml) is the trigger workflow; on
+every push it runs all chart jobs (no paths-filter — the whole stack is
+built each time), ordered only by their hard dependencies:
 
 ```text
-changes  (detect which charts changed)
+changes  (always: build every service)
    ├─► seaweedfs           ┐
    ├─► redis               │  Layer 0 — no chart deps. Parallel.
    ├─► postgres            │
    ├─► falkordb            │
+   ├─► keycloak            │
    ├─► presidio            │
    ├─► obot                │
    ├─► prometheus          │
@@ -378,14 +481,20 @@ changes  (detect which charts changed)
    └─► litellm             │  Layer 3 — needs postgres + redis +
                            │            presidio + otel-collector.
         ↓
-   └─► e2e (full stack)    │  Skipped if any chart above failed.
+   └─► e2e (full stack)    │  Runs once every service is up.
+        ↓
+   └─► gate                │  The single required check for branch
+                           │  protection. Green only if every job
+                           │  above passed.
 ```
 
-If a layer-0 chart (e.g. `seaweedfs`) fails, its layer-1+ dependents
-(`tempo`, `loki`, `mlflow`, `e2e`) skip via `needs:` chains. Layer-0
-charts are independent of each other — `falkordb` failing doesn't
-affect `redis`. Click into the run on github.com to see every job's
-status in one graph.
+**No fail-fast.** A service that fails its smoke test shows red on its own;
+sibling jobs still run to completion, so one failure no longer cancels the
+others — you see the full per-service result in a single graph. A dependent
+(e.g. `tempo`) skips only when a dependency it actually needs (`seaweedfs`)
+failed. The **`gate`** job aggregates the lot and is red if any job failed;
+`gate` is the **only required status check** on `main`, so a merge is allowed
+exactly when the whole stack is green.
 
 **Each chart job** calls the reusable
 [`_deploy-chart.yaml`](.github/workflows/_deploy-chart.yaml), which:
@@ -407,7 +516,99 @@ text — the proxy exercises auth + Postgres logging + OTel emission
 without hitting Anthropic/OpenAI. No repo secrets needed.
 
 **The e2e job** runs the full chain test
-([smoke-platform-e2e.sh](.github/scripts/smoke-platform-e2e.sh)):
+([smoke-stack-e2e.sh](.github/scripts/smoke-stack-e2e.sh)):
 drive a chat completion through LiteLLM (mock model), then verify
 the resulting metrics arrived in Prometheus. Catches cross-chart
 regressions that per-chart tests can't.
+
+## Production deploy
+
+[ci-and-deploy.yaml](.github/workflows/ci-and-deploy.yaml) promotes a validated
+commit to the remote **k3s** cluster. Validation itself lives in
+[deploy.yaml](.github/workflows/deploy.yaml) (the build-all flow + `gate`); this
+workflow is wired to it with a `workflow_run` trigger, so it only ever deploys a
+commit that already went green.
+
+- **Validation and promotion are separate workflows.** `deploy.yaml` builds and
+  smoke-tests the whole stack on every push; `ci-and-deploy.yaml` does nothing
+  but the prod deploy.
+- **Merging to `main` triggers a production deploy over Tailscale.** When
+  `deploy.yaml` finishes **successfully on `main`**, its `workflow_run` event
+  fires `deploy-prod`, which deploys the exact SHA that passed. A failed `gate`
+  never reaches prod; `workflow_dispatch` can promote manually.
+- **The GitHub runner joins Tailscale temporarily.** `deploy-prod` brings up
+  a short-lived, OAuth-authenticated `tag:ci` node via
+  [`tailscale/github-action@v4`](https://github.com/tailscale/github-action).
+  The node is torn down when the job ends.
+- **Deployment happens by SSH into the k3s VM.** Over the tailnet the runner
+  SSHes to the VM, pins the host key with `ssh-keyscan` (StrictHostKeyChecking
+  stays on), checks out the **exact commit SHA that passed validation**
+  (`git fetch` → `checkout` → `reset --hard` to the upstream run's `head_sha` —
+  not "latest main"), and runs the deploy **locally on the VM**. The Kubernetes
+  API is never exposed publicly — it is reachable only over Tailscale + SSH.
+
+### Two deploy scripts: dev (kind) vs prod (k3s)
+
+The prod deploy script is **separate** from the kind deploy script:
+
+- [`deploy.sh`](deploy.sh) — the **kind/dev + CI** path. Creates (or reuses) a
+  kind cluster, switches to its `kind-<name>` context, applies the **dev**
+  sealing key, and installs the full stack. Used locally and by both CI
+  workflows.
+- [`scripts/deploy-prod.sh`](scripts/deploy-prod.sh) — the **k3s/prod** path,
+  run on the VM by `deploy-prod`. It **sources** `deploy.sh` to reuse the exact
+  same chart catalog and `helm upgrade --install` logic (so the two can't
+  drift), but it **never creates a kind cluster or switches context** — it
+  refuses to run if the current context is `kind-*`, verifies reachability with
+  `kubectl get nodes`, and uses **prod** SealedSecrets/cert material from
+  `secrets/prod/` rather than the dev key. It is idempotent (every chart goes
+  in via `helm upgrade --install`).
+
+> **Prod SealedSecrets.** `deploy-prod.sh` assumes the Sealed Secrets
+> controller and its **prod private key** are already installed on the k3s
+> cluster (managed out of band — never committed; auto-installing would mint a
+> new key and orphan existing secrets). It applies prod-sealed SealedSecrets
+> from `deploy/sealed-secrets/prod/` if present. The committed SealedSecrets in
+> `deploy/sealed-secrets/` are **dev-sealed** and will not decrypt in prod —
+> seal prod copies with the prod cert and commit them there:
+> `./deploy.sh --seal --env prod <name> <out.yaml> --from-literal=k=v`.
+
+### Required GitHub secrets
+
+| Secret | Purpose |
+| --- | --- |
+| `PROD_HOST` | VM tailnet address (e.g. `100.x.y.z`) |
+| `PROD_USER` | SSH user on the VM |
+| `PROD_SSH_KEY` | Private SSH key for that user (written to a `0600` file, never echoed) |
+| `TS_OAUTH_CLIENT_ID` | Tailscale OAuth client id for the ephemeral `tag:ci` node |
+| `TS_OAUTH_SECRET` | Tailscale OAuth client secret |
+
+### VM repo access
+
+`deploy-prod` runs `git fetch` / `checkout` / `reset --hard` in `APP_DIR` on
+the VM (default `/opt/agentic-enterprise`). The workflow deliberately does **not**
+embed any token in the SSH script. The VM must already be able to reach this
+private repo by one of:
+
+- **a)** an existing checkout at `APP_DIR` whose `origin` is authenticated
+  (the deploy step then just fetches/resets — no clone), or
+- **b)** a deploy key configured on the VM (e.g. an SSH deploy key in
+  `~/.ssh` for `ubuntu-vm-server`), letting the initial `git clone` succeed.
+
+> **TODO — VM repo access.** Confirm `APP_DIR` and provision (a) or (b) on the
+> VM before the first prod deploy. Until then the `git clone`/`fetch` step will
+> fail for a private repo.
+
+### Recommended branch protection
+
+Protect `main` so the production deploy can only ever run on a validated
+commit: require the **`gate`** check (from
+[deploy.yaml](.github/workflows/deploy.yaml)) to pass before merge — `gate` is
+green only when every service job and the full-stack `e2e` test passed.
+Optionally add a required reviewer to the **production** GitHub Environment for
+a manual approval gate before `deploy-prod` runs.
+
+> **Note.** Validation runs once. `deploy.yaml` (build-all + the required
+> `gate` check) on every push is the single source of truth; `ci-and-deploy.yaml`
+> no longer re-runs its own kind validation — it promotes to prod via
+> `workflow_run`, only after `deploy.yaml` succeeds on `main`.

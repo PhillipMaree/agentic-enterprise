@@ -8,6 +8,17 @@
 
 # Secrets
 .env
+.env.*
+!.env.example
+# Compose file-based secrets: values are local-only, only *.example committed.
+secrets/compose/*
+!secrets/compose/*.example
+# Never commit unsealed Secret manifests or any prod private key.
+# (Committed: deploy/sealed-secrets/*.sealed.yaml, secrets/dev|prod/*.pem,
+#  secrets/dev/sealed-secrets-dev-keypair.yaml — all intentionally tracked.)
+*.unsealed.yaml
+secrets/prod/*-key*.pem
+secrets/prod/*keypair*
 
 # Helm
 *.tgz
@@ -23,3 +34,5 @@ kubeconfig
 .idea/
 .vscode/
 *.swp
+deploy.sh
+.obot/

@@ -1,5 +1,5 @@
 # Overrides for the upstream obot/obot chart, used with:
-#   helm install platform-obot --repo https://charts.obot.ai obot \
+#   helm install agentic-enterprise-obot --repo https://charts.obot.ai obot \
 #     --version v0.21.1 -f deploy/helm/obot/values.yaml
 #
 # Why not an umbrella chart: Helm 3.21's CheckDependencies rejects the

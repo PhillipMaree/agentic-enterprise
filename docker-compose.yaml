@@ -1,4 +1,4 @@
-# agentic-platform — local dev stack.
+# agentic-enterprise — local dev stack.
 #
 # Three planes:
 #   - Data:       LiteLLM proxy, MCP gateway, Presidio (PII masking)
@@ -31,10 +31,10 @@ services:
       - -s3.config=/etc/seaweedfs/s3-identities.json
       - -master.volumeSizeLimitMB=1024
     ports:
-      - "9333:9333"
-      - "8080:8080"
-      - "8888:8888"
-      - "8333:8333"
+      - "19333:9333"
+      - "19080:8080"
+      - "18888:8888"
+      - "18333:8333"
     volumes:
       - ./.seaweedfs:/data
       - ./config/seaweedfs/s3-identities.json:/etc/seaweedfs/s3-identities.json:ro
@@ -56,7 +56,7 @@ services:
     container_name: redis-db
     restart: unless-stopped
     ports:
-      - "6379:6379"
+      - "16379:6379"
     volumes:
       - ./.redis:/data:rw
     environment:
@@ -79,10 +79,15 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
+      # Server reads the password from a file-based secret. The DSN consumers
+      # (postgres-init, litellm, mlflow) build connection strings from
+      # ${POSTGRES_PASSWORD} via .env substitution — keep the two in sync.
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
       POSTGRES_DB: ${POSTGRES_DB:-mlflow}
+    secrets:
+      - postgres_password
     ports:
-      - "5432:5432"
+      - "15432:5432"
     volumes:
       - ./.postgres:/var/lib/postgresql
     healthcheck:
@@ -100,8 +105,8 @@ services:
     hostname: falkordb
     restart: unless-stopped
     ports:
-      - "6380:6379"
-      - "3000:3000"
+      - "16380:6379"
+      - "13000:3000"
     volumes:
       - ./.falkordb:/data
     healthcheck:
@@ -162,7 +167,7 @@ services:
   # =========================================================================
 
   presidio-analyzer:
-    image: mcr.microsoft.com/presidio-analyzer:latest
+    image: mcr.microsoft.com/presidio-analyzer:2.2.361
     container_name: presidio-analyzer
     hostname: presidio-analyzer
     restart: unless-stopped
@@ -176,7 +181,7 @@ services:
       - network_bridge
 
   presidio-anonymizer:
-    image: mcr.microsoft.com/presidio-anonymizer:latest
+    image: mcr.microsoft.com/presidio-anonymizer:2.2.361
     container_name: presidio-anonymizer
     hostname: presidio-anonymizer
     restart: unless-stopped
@@ -206,7 +211,7 @@ services:
       otel-collector:
         condition: service_started
     ports:
-      - "4000:4000"
+      - "14000:4000"
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-password}@postgres:5432/litellm
       REDIS_HOST: redis
@@ -251,7 +256,7 @@ services:
     hostname: obot
     restart: unless-stopped
     ports:
-      - "8090:8080"
+      - "18090:8080"
     volumes:
       # Obot uses the docker socket to spawn MCP server containers when
       # running outside k8s. Same docker socket dance as the old gateway.
@@ -261,7 +266,9 @@ services:
       OBOT_SERVER_AUTH_REGISTRY_REQUIRE_AUTH: "false"
       OBOT_SERVER_UPDATE_CHECK: "false"
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/api/health >/dev/null 2>&1 || exit 1"]
+      # The obot image has curl but not wget, and /api/health is auth-gated (403);
+      # /api/version returns 200 unauthenticated, so use that as the liveness probe.
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/api/version >/dev/null || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 5
@@ -284,7 +291,7 @@ services:
       seaweedfs-init:
         condition: service_completed_successfully
     ports:
-      - "5000:5000"
+      - "15000:5000"
     environment:
       MLFLOW_S3_ENDPOINT_URL: http://seaweedfs:8333
       MLFLOW_S3_IGNORE_TLS: "true"
@@ -332,10 +339,10 @@ services:
       loki:
         condition: service_started
     ports:
-      - "4317:4317"   # OTLP gRPC
-      - "4318:4318"   # OTLP HTTP
-      - "8889:8888"   # collector's own /metrics (8888 inside, 8889 on host
-                      # to avoid colliding with SeaweedFS filer on 8888)
+      - "14317:4317"   # OTLP gRPC
+      - "14318:4318"   # OTLP HTTP
+      - "18889:8888"   # collector's own /metrics (8888 inside, 18889 on host
+                      # to avoid colliding with SeaweedFS filer on 18888)
     volumes:
       - ./config/otel-collector/config.yaml:/etc/otel-collector/config.yaml:ro
     command: ["--config=/etc/otel-collector/config.yaml"]
@@ -351,7 +358,7 @@ services:
       seaweedfs-init:
         condition: service_completed_successfully
     ports:
-      - "3200:3200"   # query API
+      - "13200:3200"   # query API
     volumes:
       - ./config/tempo/tempo.yaml:/etc/tempo/tempo.yaml:ro
       - ./.tempo:/var/tempo
@@ -371,7 +378,7 @@ services:
       seaweedfs-init:
         condition: service_completed_successfully
     ports:
-      - "3100:3100"
+      - "13100:3100"
     volumes:
       - ./config/loki/loki-config.yaml:/etc/loki/loki-config.yaml:ro
       - ./.loki:/var/loki
@@ -386,7 +393,7 @@ services:
     hostname: prometheus
     restart: unless-stopped
     ports:
-      - "9090:9090"
+      - "19090:9090"
     volumes:
       - ./config/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus-data:/prometheus
@@ -405,7 +412,10 @@ services:
       - network_bridge
 
   grafana:
-    image: grafana/grafana:latest
+    # Pinned (not :latest): newer Grafana ships the experimental k8s dashboard
+    # apiserver / unified storage default-on, which has no backend here and
+    # hangs requests (context-deadline-exceeded), making login take minutes.
+    image: grafana/grafana:11.6.3
     container_name: grafana
     hostname: grafana
     restart: unless-stopped
@@ -417,13 +427,16 @@ services:
       loki:
         condition: service_started
     ports:
-      # Host port 3001 because 3000 is taken by falkordb's browser UI.
-      - "3001:3000"
+      # Host port 13001 because 13000 is taken by falkordb's browser UI.
+      - "13001:3000"
     environment:
-      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      # Admin password from a file-based secret (Grafana reads GF_*__FILE).
+      GF_SECURITY_ADMIN_PASSWORD__FILE: /run/secrets/grafana_admin_password
       GF_AUTH_ANONYMOUS_ENABLED: "false"
       GF_USERS_ALLOW_SIGN_UP: "false"
       GF_FEATURE_TOGGLES_ENABLE: "traceqlEditor traceToMetrics"
+    secrets:
+      - grafana_admin_password
     volumes:
       - ./config/grafana/provisioning:/etc/grafana/provisioning:ro
       - grafana-data:/var/lib/grafana
@@ -436,9 +449,59 @@ services:
     networks:
       - network_bridge
 
+  # Keycloak — central IdP for agentic apps (realm agentic-dev). Dev mode (H2),
+  # imports the realm on startup. Listens on 18080 (compose convention: host-
+  # exposed ports are 1xxxx; 8080 is taken by seaweedfs). KC_HOSTNAME pins the
+  # issuer to keycloak:18080 so the token `iss` matches for both the browser
+  # (add `127.0.0.1 keycloak` to /etc/hosts, reach it at keycloak:18080) and
+  # in-network validators.
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.1
+    # Keycloak 26 does NOT honour the *_FILE convention for the bootstrap admin
+    # password (unlike postgres/grafana), so read the file-based secret into the
+    # env var via an entrypoint wrapper before exec'ing kc.sh. ($$ escapes $ so
+    # Compose passes it through to the shell.)
+    entrypoint:
+      - /bin/bash
+      - -c
+      - export KC_BOOTSTRAP_ADMIN_PASSWORD="$$(cat /run/secrets/keycloak_admin_password)"; exec /opt/keycloak/bin/kc.sh "$$@"
+      - --
+    command: ["start-dev", "--import-realm", "--features=token-exchange"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN_USERNAME:-admin}
+      KC_HOSTNAME: http://keycloak:18080
+      KC_HOSTNAME_STRICT: "false"
+      KC_HTTP_ENABLED: "true"
+      KC_HTTP_PORT: "18080"
+    secrets:
+      - keycloak_admin_password
+    ports:
+      - "18080:18080"
+    volumes:
+      - ./deploy/helm/keycloak/realm-agentic-dev.json:/opt/keycloak/data/import/realm.json:ro
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/localhost/18080 && echo ok >&3"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    networks:
+      - network_bridge
+
 volumes:
   prometheus-data:
   grafana-data:
+
+# File-based secrets. Values live in gitignored secrets/compose/<name>;
+# copy the committed *.example to bootstrap (`cp secrets/compose/X.example
+# secrets/compose/X`). Real values never get committed. See docs/SECURITY.md.
+secrets:
+  postgres_password:
+    file: ./secrets/compose/postgres_password
+  keycloak_admin_password:
+    file: ./secrets/compose/keycloak_admin_password
+  grafana_admin_password:
+    file: ./secrets/compose/grafana_admin_password
 
 networks:
   network_bridge:

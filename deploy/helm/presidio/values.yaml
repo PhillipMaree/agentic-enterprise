@@ -5,7 +5,9 @@
 analyzer:
   image:
     repository: mcr.microsoft.com/presidio-analyzer
-    tag: latest
+    # Pin a real version — MCR has no `latest` tag for presidio (HEAD on
+    # :latest returns 403), which flaked the litellm CI job on ImagePullBackOff.
+    tag: "2.2.361"
     pullPolicy: IfNotPresent
   resources:
     requests:
@@ -18,7 +20,7 @@ analyzer:
 anonymizer:
   image:
     repository: mcr.microsoft.com/presidio-anonymizer
-    tag: latest
+    tag: "2.2.361"
     pullPolicy: IfNotPresent
   resources:
     requests:
