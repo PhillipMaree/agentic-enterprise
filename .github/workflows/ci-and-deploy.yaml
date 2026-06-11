@@ -1,4 +1,4 @@
-name: CI and deploy
+name: CI and prod deploy
 
 # Production promotion only. Validation is owned by deploy.yaml (the build-all
 # `gate` job). This workflow SSHes into the remote k3s VM and deploys there —
@@ -104,6 +104,11 @@ jobs:
           SHA="$1"
           APP_DIR="$2"
           REPO_URL="$3"
+
+          # Non-interactive SSH doesn't load the user's profile, so k3s's
+          # kubeconfig (copied to ~/.kube/config on the VM) isn't picked up
+          # automatically — set it explicitly for kubectl/helm below.
+          export KUBECONFIG="$HOME/.kube/config"
 
           echo "==> verifying k3s access"
           kubectl get nodes

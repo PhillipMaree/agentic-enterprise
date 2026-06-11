@@ -26,6 +26,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$REPO_ROOT"
 
+# k3s writes its kubeconfig to /etc/rancher/k3s/k3s.yaml; the deploy user copies
+# it to ~/.kube/config. Non-interactive SSH shells don't load the profile, so
+# pin KUBECONFIG here for every kubectl/helm this script (and deploy.sh) runs.
+export KUBECONFIG="${KUBECONFIG:-$HOME/.kube/config}"
+
 # Reuse deploy.sh's chart catalog (INSTALL_ORDER, HARD_DEPS, DIRECT_CHARTS),
 # its install_chart/helm helpers, the bootstrap jobs, and the sealed-secrets
 # helpers — WITHOUT running its kind bootstrap. Sourcing is guarded in
