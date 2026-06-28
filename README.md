@@ -294,7 +294,7 @@ kubectl create namespace agentic-enterprise
 #     then apply the committed SealedSecrets (they decrypt into agentic-enterprise-* Secrets).
 kubectl apply -f secrets/dev/sealed-secrets-dev-keypair.yaml
 helm -n kube-system upgrade --install sealed-secrets sealed-secrets \
-  --repo https://bitnami-labs.github.io/sealed-secrets --version 2.17.9 \
+  --repo https://bitnami.github.io/sealed-secrets --version 2.17.9 \
   -f deploy/helm/sealed-secrets/values.yaml --wait
 kubectl -n kube-system rollout status deploy/sealed-secrets-controller
 kubectl apply -f deploy/sealed-secrets/
