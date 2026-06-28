@@ -216,7 +216,7 @@ Try it:
 curl -sS http://localhost:14000/v1/chat/completions \
   -H "Authorization: Bearer sk-dev-master-key-change-me-not-a-secret" \
   -H "Content-Type: application/json" \
-  -d '{"model":"claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}]}'
+  -d '{"model":"claude-fable-5","messages":[{"role":"user","content":"hi"}]}'
 
 # Grafana (admin / password)
 open http://localhost:13001

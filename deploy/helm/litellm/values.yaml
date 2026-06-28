@@ -39,6 +39,10 @@ redis:
 
 proxy_config:
   model_list:
+    - model_name: claude-fable-5
+      litellm_params:
+        model: anthropic/claude-fable-5
+        api_key: os.environ/ANTHROPIC_API_KEY
     - model_name: claude-sonnet-4-6
       litellm_params:
         model: anthropic/claude-sonnet-4-6
@@ -90,7 +94,11 @@ proxy_config:
         output_parse_pii: true
 
   general_settings:
-    store_model_in_db: true
+    # Models come from proxy_config.model_list, not the DB. DB-backed model
+    # storage only adds the periodic add_deployment/get_credentials pollers
+    # (which flaked on the image's Prisma engine); keys/teams/spend still use
+    # the DB. See config/litellm/config.yaml. Set true to manage models via UI.
+    store_model_in_db: false
 
 masterkeySecretName: agentic-enterprise-litellm-secrets
 masterkeySecretKey: masterkey
