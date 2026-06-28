@@ -31,7 +31,8 @@ HELM_DIR="deploy/helm"
 # Secrets in $NS. Chart 2.17.9 == controller 0.33.1 (matches the kubeseal CLI).
 SEALED_NS="kube-system"
 SEALED_RELEASE="sealed-secrets"
-SEALED_REPO="https://bitnami-labs.github.io/sealed-secrets"
+# Chart moved orgs (2026): bitnami-labs.github.io 404s; now bitnami.github.io.
+SEALED_REPO="https://bitnami.github.io/sealed-secrets"
 SEALED_CHART="sealed-secrets"
 SEALED_VERSION="2.17.9"
 SEALED_DIR="deploy/sealed-secrets"            # committed *.sealed.yaml

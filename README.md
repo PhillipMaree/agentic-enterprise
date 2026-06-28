@@ -216,7 +216,7 @@ Try it:
 curl -sS http://localhost:14000/v1/chat/completions \
   -H "Authorization: Bearer sk-dev-master-key-change-me-not-a-secret" \
   -H "Content-Type: application/json" \
-  -d '{"model":"claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}]}'
+  -d '{"model":"claude-fable-5","messages":[{"role":"user","content":"hi"}]}'
 
 # Grafana (admin / password)
 open http://localhost:13001
@@ -294,7 +294,7 @@ kubectl create namespace agentic-enterprise
 #     then apply the committed SealedSecrets (they decrypt into agentic-enterprise-* Secrets).
 kubectl apply -f secrets/dev/sealed-secrets-dev-keypair.yaml
 helm -n kube-system upgrade --install sealed-secrets sealed-secrets \
-  --repo https://bitnami-labs.github.io/sealed-secrets --version 2.17.9 \
+  --repo https://bitnami.github.io/sealed-secrets --version 2.17.9 \
   -f deploy/helm/sealed-secrets/values.yaml --wait
 kubectl -n kube-system rollout status deploy/sealed-secrets-controller
 kubectl apply -f deploy/sealed-secrets/
@@ -598,6 +598,74 @@ private repo by one of:
 > **TODO — VM repo access.** Confirm `APP_DIR` and provision (a) or (b) on the
 > VM before the first prod deploy. Until then the `git clone`/`fetch` step will
 > fail for a private repo.
+
+### Production secrets with Sealed Secrets
+
+Prod credentials are managed **GitOps-style**: only encrypted
+[`SealedSecret`](https://github.com/bitnami-labs/sealed-secrets) manifests live
+in the repo, never raw values.
+
+- **Never commit raw secrets** — no `kind: Secret`, `.env`, private keys,
+  tokens, passwords, kubeconfigs, or literal/base64 values. Only
+  `kind: SealedSecret` YAML belongs in `deploy/sealed-secrets/prod/`. CI enforces
+  this with [`scripts/check-no-raw-secrets.sh`](scripts/check-no-raw-secrets.sh)
+  (a failing check fails the `gate`, so it can't merge). Temporary raw inputs are
+  gitignored — delete them after sealing.
+- The prod cluster runs the Sealed Secrets controller in `kube-system`, holding
+  the **prod private key**. The matching **public cert** is committed at
+  [secrets/prod/sealed-secrets-public-cert.pem](secrets/prod/sealed-secrets-public-cert.pem),
+  and `./deploy.sh --seal --env prod` seals against it.
+- On deploy, `scripts/deploy-prod.sh` applies everything in
+  `deploy/sealed-secrets/prod/`, then waits for the derived Secrets. If that
+  directory is empty it continues only when the required Secrets already exist
+  live, and **fails fast** if any are missing.
+
+The five Secrets are
+`agentic-enterprise-{postgres,keycloak-admin,grafana-admin,litellm-secrets,s3-creds}`.
+Two helper scripts create and seal them; real values stay on your machine and
+only the encrypted output is committed.
+
+**1. Generate the random internal secrets.**
+[`scripts/gen-prod-secrets.sh`](scripts/gen-prod-secrets.sh) mints strong random
+values for everything with no external source (Postgres/Keycloak/Grafana admin
+passwords, the LiteLLM master key, the S3 access/secret keys), writes the matching
+SeaweedFS S3 identities JSON, and emits a source-able env file **outside the repo**
+(mode `0600`, default `~/.agentic-enterprise-prod.env`). It does **not** touch the
+real provider keys — keep `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` in your own shell
+or profile; the seal step reads them straight from the environment.
+
+```bash
+export ANTHROPIC_API_KEY=...                 # real provider keys — your shell only, never the env file
+export OPENAI_API_KEY=...
+scripts/gen-prod-secrets.sh                  # writes ~/.agentic-enterprise-prod.env + -s3-identities.json
+```
+
+Prefer to set everything by hand? Copy
+[secrets/prod/prod-secrets.env.example](secrets/prod/prod-secrets.env.example)
+out of the repo instead and replace every `<PLACEHOLDER>`.
+
+**2. Source the values and seal.**
+[`scripts/seal-prod-secrets.sh`](scripts/seal-prod-secrets.sh) reads every
+required var from the environment (aborting **before** sealing anything if one is
+missing or `S3_IDENTITIES_FILE` is unreadable), verifies the committed cert
+matches the live prod controller, then seals all five SealedSecrets into
+`deploy/sealed-secrets/prod/`.
+
+```bash
+set -a; source ~/.agentic-enterprise-prod.env; set +a
+scripts/seal-prod-secrets.sh                 # SKIP_CERT_CHECK=1 to seal without cluster access
+```
+
+**3. Commit only the encrypted output.**
+
+```bash
+scripts/check-no-raw-secrets.sh
+git add deploy/sealed-secrets/prod/*.sealedsecret.yaml
+```
+
+The per-secret key lists and the equivalent **manual** `./deploy.sh --seal`
+commands (one secret at a time, e.g. to rotate a single key) are in
+[deploy/sealed-secrets/prod/README.md](deploy/sealed-secrets/prod/README.md).
 
 ### Recommended branch protection
 

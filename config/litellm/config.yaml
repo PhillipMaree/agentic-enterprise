@@ -15,6 +15,11 @@
 model_list:
   # Add or remove model aliases here. The `model_name` is the alias the
   # client uses; `litellm_params.model` is the provider-prefixed real model.
+  - model_name: claude-fable-5
+    litellm_params:
+      model: anthropic/claude-fable-5
+      api_key: os.environ/ANTHROPIC_API_KEY
+
   - model_name: claude-sonnet-4-6
     litellm_params:
       model: anthropic/claude-sonnet-4-6
@@ -83,6 +88,12 @@ guardrails:
 
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY
+  # Cost + usage tracking, virtual keys, and teams are written to Postgres via
+  # this database_url.
   database_url: os.environ/DATABASE_URL
-  # Cost + usage tracking written to Postgres. Disable if you don't need it.
-  store_model_in_db: true
+  # Models are declared in model_list (this file), not the DB, so DB-backed model
+  # storage is off — it only adds the periodic add_deployment/get_credentials
+  # pollers, which intermittently time out on this image's Prisma engine. Keys,
+  # teams, and spend logging still use the DB. Set true only to manage models
+  # via the admin UI.
+  store_model_in_db: false
