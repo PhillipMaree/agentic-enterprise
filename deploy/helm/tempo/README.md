@@ -1,19 +1,19 @@
-# agentic-enterprise-tempo
+# enterprise-platform-tempo
 
 Umbrella chart over `grafana/tempo` (single-binary mode). Stores trace
 blocks in SeaweedFS S3 (`tempo-traces` bucket).
 
 ## Prereqs
 
-- `agentic-enterprise-seaweedfs` installed (Tempo writes to its S3 endpoint).
+- `enterprise-platform-seaweedfs` installed (Tempo writes to its S3 endpoint).
 - The `tempo-traces` bucket exists (created by the seaweedfs-init job).
 
 ## Install
 
 ```bash
 helm dependency update deploy/helm/tempo
-helm install agentic-enterprise-tempo deploy/helm/tempo \
-  --namespace agentic-enterprise --create-namespace \
+helm install enterprise-platform-tempo deploy/helm/tempo \
+  --namespace enterprise-platform --create-namespace \
   --wait --timeout 5m
 ```
 
@@ -25,6 +25,6 @@ queries it directly via the auto-provisioned datasource.
 ## Uninstall
 
 ```bash
-helm uninstall agentic-enterprise-tempo -n agentic-enterprise
-kubectl delete pvc -l app.kubernetes.io/instance=agentic-enterprise-tempo -n agentic-enterprise
+helm uninstall enterprise-platform-tempo -n enterprise-platform
+kubectl delete pvc -l app.kubernetes.io/instance=enterprise-platform-tempo -n enterprise-platform
 ```

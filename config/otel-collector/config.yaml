@@ -1,4 +1,4 @@
-# OpenTelemetry Collector — central telemetry fan-out for agentic-enterprise.
+# OpenTelemetry Collector — central telemetry fan-out for enterprise-platform.
 #
 # Why a collector at all:
 #   Apps emit OTLP once. The collector handles routing per signal type to the

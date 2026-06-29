@@ -14,11 +14,11 @@ seaweedfs:
     s3:
       enabled: true
       # S3 auth on. Credentials (the seaweedfs_s3_config JSON) come from the
-      # agentic-enterprise-s3-creds Secret, decrypted from
+      # enterprise-platform-s3-creds Secret, decrypted from
       # deploy/sealed-secrets/s3.sealed.yaml. The chart mounts that Secret and
       # passes -s3.config=<mount>/seaweedfs_s3_config to the gateway.
       enableAuth: true
-      existingConfigSecret: agentic-enterprise-s3-creds
+      existingConfigSecret: enterprise-platform-s3-creds
     data:
       type: persistentVolumeClaim
       size: 2Gi

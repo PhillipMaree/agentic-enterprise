@@ -4,7 +4,7 @@
 against the **prod** public cert
 ([../../../secrets/prod/sealed-secrets-public-cert.pem](../../../secrets/prod/sealed-secrets-public-cert.pem))
 and decrypts — only inside the prod cluster, whose controller holds the matching
-prod private key — into a `Secret` in the `agentic-enterprise` namespace.
+prod private key — into a `Secret` in the `enterprise-platform` namespace.
 
 `scripts/deploy-prod.sh` applies everything in this directory before the Helm
 charts install, then waits for the derived Secrets.
@@ -23,25 +23,25 @@ charts install, then waits for the derived Secrets.
 Derived from the charts and the committed dev SealedSecrets — do not change names
 without updating the charts and `SEALED_SECRET_NAMES` in `deploy.sh`.
 
-### `agentic-enterprise-postgres`  — Postgres (litellm, mlflow, keycloak share it)
+### `enterprise-platform-postgres`  — Postgres (litellm, mlflow, keycloak share it)
 - `POSTGRES_USER`
 - `POSTGRES_PASSWORD`
 - `POSTGRES_DB`
 
-### `agentic-enterprise-keycloak-admin`  — Keycloak bootstrap admin
+### `enterprise-platform-keycloak-admin`  — Keycloak bootstrap admin
 - `username`
 - `password`
 
-### `agentic-enterprise-grafana-admin`  — Grafana admin
+### `enterprise-platform-grafana-admin`  — Grafana admin
 - `admin-user`
 - `admin-password`
 
-### `agentic-enterprise-litellm-secrets`  — LiteLLM master key + real provider keys
+### `enterprise-platform-litellm-secrets`  — LiteLLM master key + real provider keys
 - `masterkey`
 - `anthropic-api-key`
 - `openai-api-key`
 
-### `agentic-enterprise-s3-creds`  — SeaweedFS S3 creds (seaweedfs, tempo, loki, mlflow, bucket-init)
+### `enterprise-platform-s3-creds`  — SeaweedFS S3 creds (seaweedfs, tempo, loki, mlflow, bucket-init)
 - `AWS_ACCESS_KEY_ID`
 - `AWS_SECRET_ACCESS_KEY`
 - `AWS_DEFAULT_REGION`
@@ -55,7 +55,7 @@ without updating the charts and `SEALED_SECRET_NAMES` in `deploy.sh`.
 > two helper scripts instead of the per-secret commands below:
 > `scripts/gen-prod-secrets.sh` mints the random internal values + S3 identities
 > JSON into an out-of-repo env file, then (with `ANTHROPIC_API_KEY` /
-> `OPENAI_API_KEY` exported) `set -a; source ~/.agentic-enterprise-prod.env; set +a`
+> `OPENAI_API_KEY` exported) `set -a; source ~/.enterprise-platform-prod.env; set +a`
 > and run `scripts/seal-prod-secrets.sh`. The per-secret commands below are for
 > rotating or re-sealing a single secret.
 
@@ -67,31 +67,31 @@ real values into chat or commit them.
 ```bash
 mkdir -p deploy/sealed-secrets/prod
 
-./deploy.sh --seal --env prod agentic-enterprise-postgres \
-  prod/agentic-enterprise-postgres.sealedsecret.yaml \
+./deploy.sh --seal --env prod enterprise-platform-postgres \
+  prod/enterprise-platform-postgres.sealedsecret.yaml \
   --from-literal=POSTGRES_USER='<POSTGRES_USER>' \
   --from-literal=POSTGRES_PASSWORD='<POSTGRES_PASSWORD>' \
   --from-literal=POSTGRES_DB='<POSTGRES_DB>'
 
-./deploy.sh --seal --env prod agentic-enterprise-keycloak-admin \
-  prod/agentic-enterprise-keycloak-admin.sealedsecret.yaml \
+./deploy.sh --seal --env prod enterprise-platform-keycloak-admin \
+  prod/enterprise-platform-keycloak-admin.sealedsecret.yaml \
   --from-literal=username='<KEYCLOAK_ADMIN_USER>' \
   --from-literal=password='<KEYCLOAK_ADMIN_PASSWORD>'
 
-./deploy.sh --seal --env prod agentic-enterprise-grafana-admin \
-  prod/agentic-enterprise-grafana-admin.sealedsecret.yaml \
+./deploy.sh --seal --env prod enterprise-platform-grafana-admin \
+  prod/enterprise-platform-grafana-admin.sealedsecret.yaml \
   --from-literal=admin-user='<GRAFANA_ADMIN_USER>' \
   --from-literal=admin-password='<GRAFANA_ADMIN_PASSWORD>'
 
-./deploy.sh --seal --env prod agentic-enterprise-litellm-secrets \
-  prod/agentic-enterprise-litellm-secrets.sealedsecret.yaml \
+./deploy.sh --seal --env prod enterprise-platform-litellm-secrets \
+  prod/enterprise-platform-litellm-secrets.sealedsecret.yaml \
   --from-literal=masterkey='<LITELLM_MASTER_KEY>' \
   --from-literal=anthropic-api-key='<ANTHROPIC_API_KEY>' \
   --from-literal=openai-api-key='<OPENAI_API_KEY>'
 
 # seaweedfs_s3_config is a JSON file (the S3 identities). Use --from-file:
-./deploy.sh --seal --env prod agentic-enterprise-s3-creds \
-  prod/agentic-enterprise-s3-creds.sealedsecret.yaml \
+./deploy.sh --seal --env prod enterprise-platform-s3-creds \
+  prod/enterprise-platform-s3-creds.sealedsecret.yaml \
   --from-literal=AWS_ACCESS_KEY_ID='<S3_ACCESS_KEY>' \
   --from-literal=AWS_SECRET_ACCESS_KEY='<S3_SECRET_KEY>' \
   --from-literal=AWS_DEFAULT_REGION='<S3_REGION>' \

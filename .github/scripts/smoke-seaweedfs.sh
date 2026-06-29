@@ -2,7 +2,7 @@
 set -euo pipefail
 source "$(dirname "$0")/_common.sh"
 
-kubectl -n "$NAMESPACE" port-forward svc/agentic-enterprise-seaweedfs-all-in-one 8333:8333 >/tmp/pf.log 2>&1 &
+kubectl -n "$NAMESPACE" port-forward svc/enterprise-platform-seaweedfs-all-in-one 8333:8333 >/tmp/pf.log 2>&1 &
 PF=$!
 trap 'kill $PF 2>/dev/null || true' EXIT
 wait_for_port 8333

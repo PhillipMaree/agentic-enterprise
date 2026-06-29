@@ -373,7 +373,7 @@ jobs:
       run:
         shell: bash
     env:
-      NAMESPACE: agentic-enterprise
+      NAMESPACE: enterprise-platform
     steps:
       - uses: actions/checkout@v5
       - name: Free disk space
@@ -387,7 +387,7 @@ jobs:
       - uses: helm/kind-action@v1
         with:
           config: deploy/kind/kind-config.yaml
-          cluster_name: agentic-enterprise
+          cluster_name: enterprise-platform
       - name: ./deploy.sh --up (full stack, mock litellm)
         env:
           LITELLM_USE_MOCK_MODELS: "1"

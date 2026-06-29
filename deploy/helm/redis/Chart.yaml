@@ -1,6 +1,6 @@
 apiVersion: v2
-name: agentic-enterprise-redis
-description: Redis 8 (bundles RedisJSON + RediSearch natively) for the agentic-enterprise namespace (dev/kind deploy).
+name: enterprise-platform-redis
+description: Redis 8 (bundles RedisJSON + RediSearch natively) for the enterprise-platform namespace (dev/kind deploy).
 type: application
 version: 0.1.0
 appVersion: "8"

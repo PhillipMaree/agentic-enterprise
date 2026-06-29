@@ -1,4 +1,4 @@
-# agentic-enterprise
+# enterprise-platform
 
 End-to-end local development stack for agentic AI: an LLM gateway with
 built-in PII masking, an MCP tool federation gateway, experiment tracking,
@@ -11,8 +11,8 @@ else.
 Two consumption surfaces, both running the same set of services:
 
 - **Docker Compose** — fastest local loop. `docker compose up -d`.
-- **Helm charts** — one chart per service, all named `agentic-enterprise-<svc>`,
-  installed into the `agentic-enterprise` namespace of a local
+- **Helm charts** — one chart per service, all named `enterprise-platform-<svc>`,
+  installed into the `enterprise-platform` namespace of a local
   [kind](https://kind.sigs.k8s.io/) cluster.
 
 > Dev-only. Auth is off or set to defaults. Do not point any of this at a
@@ -262,11 +262,11 @@ provisioning a real cluster. All orchestration is wrapped in
 
 The script:
 
-- reuses an existing `agentic-enterprise` kind cluster if present
+- reuses an existing `enterprise-platform` kind cluster if present
 - installs the **Sealed Secrets controller** into `kube-system` (adopting the
   committed dev sealing key in `secrets/dev/`), then applies the committed
   `SealedSecret`s in [deploy/sealed-secrets/](deploy/sealed-secrets/) — they
-  decrypt into the `agentic-enterprise-*` Secrets the charts consume (postgres, keycloak
+  decrypt into the `enterprise-platform-*` Secrets the charts consume (postgres, keycloak
   admin, grafana admin, litellm masterkey, S3 creds)
 - runs `helm dependency update` + extracts subchart tarballs (Helm 3.21+
   requires deps unpacked into `charts/<name>/`, not just present as `.tgz`)
@@ -277,9 +277,9 @@ The script:
 Try it (run each port-forward in its own terminal):
 
 ```bash
-kubectl -n agentic-enterprise port-forward svc/agentic-enterprise-litellm 4000:4000
-kubectl -n agentic-enterprise port-forward svc/agentic-enterprise-grafana 3000:80
-kubectl -n agentic-enterprise port-forward svc/agentic-enterprise-mlflow  5000:5000
+kubectl -n enterprise-platform port-forward svc/enterprise-platform-litellm 4000:4000
+kubectl -n enterprise-platform port-forward svc/enterprise-platform-grafana 3000:80
+kubectl -n enterprise-platform port-forward svc/enterprise-platform-mlflow  5000:5000
 ```
 
 <details>
@@ -287,11 +287,11 @@ kubectl -n agentic-enterprise port-forward svc/agentic-enterprise-mlflow  5000:5
 
 ```bash
 # 1. Cluster + namespace
-kind create cluster --config deploy/kind/kind-config.yaml --name agentic-enterprise
-kubectl create namespace agentic-enterprise
+kind create cluster --config deploy/kind/kind-config.yaml --name enterprise-platform
+kubectl create namespace enterprise-platform
 
 # 1b. Sealed Secrets: adopt the committed dev key, install the controller,
-#     then apply the committed SealedSecrets (they decrypt into agentic-enterprise-* Secrets).
+#     then apply the committed SealedSecrets (they decrypt into enterprise-platform-* Secrets).
 kubectl apply -f secrets/dev/sealed-secrets-dev-keypair.yaml
 helm -n kube-system upgrade --install sealed-secrets sealed-secrets \
   --repo https://bitnami.github.io/sealed-secrets --version 2.17.9 \
@@ -306,27 +306,27 @@ for c in seaweedfs tempo loki prometheus grafana otel-collector mlflow litellm; 
 done
 
 # 3. Shared infrastructure
-helm install agentic-enterprise-seaweedfs deploy/helm/seaweedfs -n agentic-enterprise --wait --timeout 5m
-helm install agentic-enterprise-redis     deploy/helm/redis     -n agentic-enterprise --wait --timeout 5m
-helm install agentic-enterprise-postgres  deploy/helm/postgres  -n agentic-enterprise --wait --timeout 5m
-helm install agentic-enterprise-falkordb  deploy/helm/falkordb  -n agentic-enterprise --wait --timeout 5m
+helm install enterprise-platform-seaweedfs deploy/helm/seaweedfs -n enterprise-platform --wait --timeout 5m
+helm install enterprise-platform-redis     deploy/helm/redis     -n enterprise-platform --wait --timeout 5m
+helm install enterprise-platform-postgres  deploy/helm/postgres  -n enterprise-platform --wait --timeout 5m
+helm install enterprise-platform-falkordb  deploy/helm/falkordb  -n enterprise-platform --wait --timeout 5m
 
 # 4. Bootstrap (buckets via in-cluster Job + litellm DB)
 # (see bootstrap_buckets / bootstrap_litellm_db in deploy.sh)
 
 # 5. Telemetry + tracking
-helm install agentic-enterprise-tempo          deploy/helm/tempo          -n agentic-enterprise --wait --timeout 5m
-helm install agentic-enterprise-loki           deploy/helm/loki           -n agentic-enterprise --wait --timeout 8m
-helm install agentic-enterprise-prometheus     deploy/helm/prometheus     -n agentic-enterprise --wait --timeout 5m
-helm install agentic-enterprise-grafana        deploy/helm/grafana        -n agentic-enterprise --wait --timeout 5m
-helm install agentic-enterprise-otel-collector deploy/helm/otel-collector -n agentic-enterprise --wait --timeout 5m
-helm install agentic-enterprise-mlflow         deploy/helm/mlflow         -n agentic-enterprise --wait --timeout 8m
+helm install enterprise-platform-tempo          deploy/helm/tempo          -n enterprise-platform --wait --timeout 5m
+helm install enterprise-platform-loki           deploy/helm/loki           -n enterprise-platform --wait --timeout 8m
+helm install enterprise-platform-prometheus     deploy/helm/prometheus     -n enterprise-platform --wait --timeout 5m
+helm install enterprise-platform-grafana        deploy/helm/grafana        -n enterprise-platform --wait --timeout 5m
+helm install enterprise-platform-otel-collector deploy/helm/otel-collector -n enterprise-platform --wait --timeout 5m
+helm install enterprise-platform-mlflow         deploy/helm/mlflow         -n enterprise-platform --wait --timeout 8m
 
-# 6. Data plane (agentic-enterprise-litellm-secrets already exists from step 1b — its
+# 6. Data plane (enterprise-platform-litellm-secrets already exists from step 1b — its
 #    masterkey is sealed; the kind path is mock-only so no provider keys here)
-helm install agentic-enterprise-presidio    deploy/helm/presidio    -n agentic-enterprise --wait --timeout 5m
-helm install agentic-enterprise-obot         deploy/helm/obot         -n agentic-enterprise --wait --timeout 8m
-helm install agentic-enterprise-litellm deploy/helm/litellm -n agentic-enterprise --wait --timeout 10m
+helm install enterprise-platform-presidio    deploy/helm/presidio    -n enterprise-platform --wait --timeout 5m
+helm install enterprise-platform-obot         deploy/helm/obot         -n enterprise-platform --wait --timeout 8m
+helm install enterprise-platform-litellm deploy/helm/litellm -n enterprise-platform --wait --timeout 10m
 ```
 
 </details>
@@ -586,7 +586,7 @@ The prod deploy script is **separate** from the kind deploy script:
 ### VM repo access
 
 `deploy-prod` runs `git fetch` / `checkout` / `reset --hard` in `APP_DIR` on
-the VM (default `/opt/agentic-enterprise`). The workflow deliberately does **not**
+the VM (default `/opt/enterprise-platform`). The workflow deliberately does **not**
 embed any token in the SSH script. The VM must already be able to reach this
 private repo by one of:
 
@@ -621,7 +621,7 @@ in the repo, never raw values.
   live, and **fails fast** if any are missing.
 
 The five Secrets are
-`agentic-enterprise-{postgres,keycloak-admin,grafana-admin,litellm-secrets,s3-creds}`.
+`enterprise-platform-{postgres,keycloak-admin,grafana-admin,litellm-secrets,s3-creds}`.
 Two helper scripts create and seal them; real values stay on your machine and
 only the encrypted output is committed.
 
@@ -630,14 +630,14 @@ only the encrypted output is committed.
 values for everything with no external source (Postgres/Keycloak/Grafana admin
 passwords, the LiteLLM master key, the S3 access/secret keys), writes the matching
 SeaweedFS S3 identities JSON, and emits a source-able env file **outside the repo**
-(mode `0600`, default `~/.agentic-enterprise-prod.env`). It does **not** touch the
+(mode `0600`, default `~/.enterprise-platform-prod.env`). It does **not** touch the
 real provider keys — keep `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` in your own shell
 or profile; the seal step reads them straight from the environment.
 
 ```bash
 export ANTHROPIC_API_KEY=...                 # real provider keys — your shell only, never the env file
 export OPENAI_API_KEY=...
-scripts/gen-prod-secrets.sh                  # writes ~/.agentic-enterprise-prod.env + -s3-identities.json
+scripts/gen-prod-secrets.sh                  # writes ~/.enterprise-platform-prod.env + -s3-identities.json
 ```
 
 Prefer to set everything by hand? Copy
@@ -652,7 +652,7 @@ matches the live prod controller, then seals all five SealedSecrets into
 `deploy/sealed-secrets/prod/`.
 
 ```bash
-set -a; source ~/.agentic-enterprise-prod.env; set +a
+set -a; source ~/.enterprise-platform-prod.env; set +a
 scripts/seal-prod-secrets.sh                 # SKIP_CERT_CHECK=1 to seal without cluster access
 ```
 

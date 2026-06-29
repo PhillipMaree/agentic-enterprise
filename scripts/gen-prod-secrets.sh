@@ -9,8 +9,8 @@
 # environment and aborts if they're missing.
 #
 # Usage:
-#   scripts/gen-prod-secrets.sh [ENV_FILE]          # default: ~/.agentic-enterprise-prod.env
-#   set -a; source ~/.agentic-enterprise-prod.env; set +a   # internal secrets + config
+#   scripts/gen-prod-secrets.sh [ENV_FILE]          # default: ~/.enterprise-platform-prod.env
+#   set -a; source ~/.enterprise-platform-prod.env; set +a   # internal secrets + config
 #   # (ANTHROPIC_API_KEY / OPENAI_API_KEY already exported in your profile)
 #   scripts/seal-prod-secrets.sh
 #
@@ -19,7 +19,7 @@
 # only to those files — never printed to the terminal.
 set -euo pipefail
 
-ENV_FILE="${1:-$HOME/.agentic-enterprise-prod.env}"
+ENV_FILE="${1:-$HOME/.enterprise-platform-prod.env}"
 S3_JSON="${ENV_FILE%.env}-s3-identities.json"
 
 # hex output → safe in shell single-quotes, JSON, and --from-literal alike.
@@ -40,7 +40,7 @@ cat > "$S3_JSON" <<JSON
 {
   "identities": [
     {
-      "name": "agentic-enterprise",
+      "name": "enterprise-platform",
       "credentials": [
         { "accessKey": "$S3_ACCESS_KEY_ID", "secretKey": "$S3_SECRET_ACCESS_KEY" }
       ],
@@ -73,7 +73,7 @@ export LITELLM_MASTER_KEY='$LITELLM_MASTER_KEY'
 export S3_ACCESS_KEY_ID='$S3_ACCESS_KEY_ID'
 export S3_SECRET_ACCESS_KEY='$S3_SECRET_ACCESS_KEY'
 export S3_REGION='us-east-1'
-export S3_ENDPOINT_URL='http://agentic-enterprise-seaweedfs-all-in-one:8333'
+export S3_ENDPOINT_URL='http://enterprise-platform-seaweedfs-all-in-one:8333'
 export S3_IDENTITIES_FILE='$S3_JSON'
 ENV
 

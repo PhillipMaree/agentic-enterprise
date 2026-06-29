@@ -1,7 +1,7 @@
 # Overrides for grafana/grafana, installed directly via `--repo`.
 # Mirrors config/grafana/provisioning/datasources/datasources.yaml.
 #
-# Admin creds come from the agentic-enterprise-grafana-admin Secret (decrypted from
+# Admin creds come from the enterprise-platform-grafana-admin Secret (decrypted from
 # deploy/sealed-secrets/grafana.sealed.yaml), not inline values.
 # Pinned (not the chart default / :latest): newer Grafana ships the
 # experimental k8s dashboard apiserver + unified storage default-on, which
@@ -11,7 +11,7 @@ image:
   tag: "11.6.3"
 
 admin:
-  existingSecret: agentic-enterprise-grafana-admin
+  existingSecret: enterprise-platform-grafana-admin
   userKey: admin-user
   passwordKey: admin-password
 
@@ -45,7 +45,7 @@ datasources:
         access: proxy
         # The community prometheus chart exposes a service called
         # `<release>-server` on port 80.
-        url: http://agentic-enterprise-prometheus-server
+        url: http://enterprise-platform-prometheus-server
         isDefault: true
         editable: false
 
@@ -53,7 +53,7 @@ datasources:
         uid: loki
         type: loki
         access: proxy
-        url: http://agentic-enterprise-loki:3100
+        url: http://enterprise-platform-loki:3100
         editable: false
         jsonData:
           derivedFields:
@@ -68,7 +68,7 @@ datasources:
         access: proxy
         # The grafana/tempo chart's Service exposes the HTTP query API
         # on port 3100 (chart convention), not Tempo's vanilla 3200.
-        url: http://agentic-enterprise-tempo:3100
+        url: http://enterprise-platform-tempo:3100
         editable: false
         jsonData:
           tracesToLogsV2:

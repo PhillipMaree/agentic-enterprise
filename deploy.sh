@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# deploy.sh — install or tear down the agentic-enterprise on a local kind cluster.
+# deploy.sh — install or tear down the enterprise-platform on a local kind cluster.
 #
 # Usage:
 #   ./deploy.sh --up                 # full stack
@@ -9,7 +9,7 @@
 #   ./deploy.sh --status             # show current state
 #   ./deploy.sh --seal NAME OUT KV.. # seal a Secret into deploy/sealed-secrets/OUT
 #
-# Reuses an existing kind cluster named agentic-enterprise if present.
+# Reuses an existing kind cluster named enterprise-platform if present.
 # All operations are idempotent — re-running --up is safe.
 #
 # Secrets: a Sealed Secrets controller is installed into kube-system first
@@ -21,8 +21,8 @@
 
 set -euo pipefail
 
-CLUSTER="agentic-enterprise"
-NS="agentic-enterprise"
+CLUSTER="enterprise-platform"
+NS="enterprise-platform"
 KIND_CFG="deploy/kind/kind-config.yaml"
 HELM_DIR="deploy/helm"
 
@@ -40,7 +40,7 @@ SEALED_DEV_KEY="secrets/dev/sealed-secrets-dev-keypair.yaml"
 SEALED_DEV_CERT="secrets/dev/sealed-secrets-public-cert.pem"
 SEALED_PROD_CERT="secrets/prod/sealed-secrets-public-cert.pem"
 # Secrets the committed SealedSecrets decrypt into — waited on before charts.
-SEALED_SECRET_NAMES=(agentic-enterprise-postgres agentic-enterprise-keycloak-admin agentic-enterprise-grafana-admin agentic-enterprise-litellm-secrets agentic-enterprise-s3-creds)
+SEALED_SECRET_NAMES=(enterprise-platform-postgres enterprise-platform-keycloak-admin enterprise-platform-grafana-admin enterprise-platform-litellm-secrets enterprise-platform-s3-creds)
 
 # Hard install-time deps: chart X cannot be installed unless its
 # dep list is already running. (Soft / runtime deps like otel-collector
@@ -129,7 +129,7 @@ ensure_ns() {
 
 chart_dir() { echo "$HELM_DIR/$1"; }
 
-helm_release() { echo "agentic-enterprise-$1"; }
+helm_release() { echo "enterprise-platform-$1"; }
 
 is_installed() {
   helm -n "$NS" status "$(helm_release "$1")" >/dev/null 2>&1
@@ -286,18 +286,18 @@ spec:
       containers:
         - name: bucket-init
           image: amazon/aws-cli:latest
-          # S3 creds from the sealed agentic-enterprise-s3-creds Secret (now that
+          # S3 creds from the sealed enterprise-platform-s3-creds Secret (now that
           # seaweedfs S3 auth is on). Supplies AWS_ACCESS_KEY_ID,
           # AWS_SECRET_ACCESS_KEY, AWS_DEFAULT_REGION.
           envFrom:
             - secretRef:
-                name: agentic-enterprise-s3-creds
+                name: enterprise-platform-s3-creds
           command:
             - /bin/sh
             - -c
             - |
               set -eu
-              ENDPOINT=http://agentic-enterprise-seaweedfs-all-in-one:8333
+              ENDPOINT=http://enterprise-platform-seaweedfs-all-in-one:8333
               until aws --endpoint-url \$ENDPOINT s3 ls >/dev/null 2>&1; do
                 echo "waiting for seaweedfs s3 endpoint..."
                 sleep 2
@@ -314,12 +314,12 @@ EOF
 }
 
 bootstrap_litellm_db() {
-  if kubectl -n "$NS" exec deploy/agentic-enterprise-postgres -- \
+  if kubectl -n "$NS" exec deploy/enterprise-platform-postgres -- \
        psql -U postgres -tc "SELECT 1 FROM pg_database WHERE datname = 'litellm'" 2>/dev/null | grep -q 1; then
     ok "litellm database already exists"
   else
-    step "Creating litellm database in agentic-enterprise-postgres"
-    kubectl -n "$NS" exec deploy/agentic-enterprise-postgres -- \
+    step "Creating litellm database in enterprise-platform-postgres"
+    kubectl -n "$NS" exec deploy/enterprise-platform-postgres -- \
       psql -U postgres -c "CREATE DATABASE litellm"
     ok "litellm database created"
   fi
@@ -336,7 +336,7 @@ apply_grafana_dashboards() {
     [ -f "$json" ] || continue
     found=1
     local base; base="$(basename "$json" .json)"
-    local cm="agentic-enterprise-grafana-dashboard-${base}"
+    local cm="enterprise-platform-grafana-dashboard-${base}"
     kubectl -n "$NS" create configmap "$cm" --from-file="$json" \
       --dry-run=client -o yaml | kubectl apply -f - >/dev/null
     kubectl -n "$NS" label configmap "$cm" grafana_dashboard=1 --overwrite >/dev/null

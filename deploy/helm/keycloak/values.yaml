@@ -15,14 +15,14 @@ service:
 # Admin bootstrap creds are pulled from an existing Secret (decrypted from
 # deploy/sealed-secrets/keycloak.sealed.yaml), not stored here in plaintext.
 admin:
-  existingSecret: agentic-enterprise-keycloak-admin
+  existingSecret: enterprise-platform-keycloak-admin
   usernameKey: username
   passwordKey: password
 
 # Public issuer hostname (browser-reachable). Override to the cloud-provider-kind
 # external URL. In-cluster validators also use this string, so it must resolve
 # both ways (or rely on KC_HOSTNAME_STRICT=false for dev).
-hostname: http://agentic-enterprise-keycloak:8080
+hostname: http://enterprise-platform-keycloak:8080
 
 resources:
   requests:

@@ -13,7 +13,7 @@ convention: this dir holds only `values.yaml`, installed with `--repo`).
   [deploy/sealed-secrets/](../../sealed-secrets/) decrypt deterministically in
   every fresh kind cluster.
 - The controller decrypts each `SealedSecret` into a normal Kubernetes
-  `Secret` in the `agentic-enterprise` namespace, which the stack charts
+  `Secret` in the `enterprise-platform` namespace, which the stack charts
   consume by name.
 
 > Dev-only. The committed sealing key is public — see
