@@ -26,7 +26,7 @@ spec:
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           args: ["start-dev", "--import-realm", "--features=token-exchange"]
           env:
-            # Admin creds come from the agentic-enterprise-keycloak-admin Secret
+            # Admin creds come from the enterprise-platform-keycloak-admin Secret
             # (deploy/sealed-secrets/keycloak.sealed.yaml), not plaintext values.
             - name: KC_BOOTSTRAP_ADMIN_USERNAME
               valueFrom:

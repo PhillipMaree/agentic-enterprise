@@ -37,8 +37,8 @@ jobs:
       run:
         shell: bash
     env:
-      NAMESPACE: agentic-enterprise
-      RELEASE: agentic-enterprise-${{ inputs.chart }}
+      NAMESPACE: enterprise-platform
+      RELEASE: enterprise-platform-${{ inputs.chart }}
     steps:
       - uses: actions/checkout@v5
 
@@ -50,7 +50,7 @@ jobs:
         uses: helm/kind-action@v1
         with:
           config: deploy/kind/kind-config.yaml
-          cluster_name: agentic-enterprise
+          cluster_name: enterprise-platform
 
       - name: Free disk space
         # The full stack pulls a lot of images. Cheap to do unconditionally.

@@ -86,7 +86,7 @@ jobs:
           # Where the repo lives on the VM, and where to clone it from if it
           # doesn't. github.repository is "owner/name".
           # TODO: confirm APP_DIR matches the real path on the VM.
-          APP_DIR: /opt/agentic-enterprise
+          APP_DIR: /opt/enterprise-platform
           REPO_URL: https://github.com/${{ github.repository }}.git
         run: |
           set -euo pipefail

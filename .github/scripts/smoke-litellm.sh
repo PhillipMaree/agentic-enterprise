@@ -30,7 +30,7 @@ curl -fsSL -o /tmp/metrics.txt http://localhost:4000/metrics
 grep -q '^# HELP' /tmp/metrics.txt
 
 # Mock chat completion (CI runs deploy.sh with LITELLM_USE_MOCK_MODELS=1).
-MASTER_KEY="$(kubectl -n "$NAMESPACE" get secret agentic-enterprise-litellm-secrets -o jsonpath='{.data.masterkey}' | base64 -d)"
+MASTER_KEY="$(kubectl -n "$NAMESPACE" get secret enterprise-platform-litellm-secrets -o jsonpath='{.data.masterkey}' | base64 -d)"
 curl -fsS http://localhost:4000/v1/chat/completions \
   -H "Authorization: Bearer ${MASTER_KEY}" \
   -H 'Content-Type: application/json' \

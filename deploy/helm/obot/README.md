@@ -1,4 +1,4 @@
-# agentic-enterprise-obot
+# enterprise-platform-obot
 
 Thin wrapper around the upstream `obot/obot` chart from
 `https://charts.obot.ai`. **Not an umbrella chart** — Helm 3.21's
@@ -9,7 +9,7 @@ installing the upstream chart directly with this directory's
 
 Obot is k8s-native: it deploys each configured MCP server as its own
 Deployment in a sibling namespace (`<release>-mcp`, i.e.
-`agentic-enterprise-obot-mcp` here).
+`enterprise-platform-obot-mcp` here).
 
 ## Install
 
@@ -20,10 +20,10 @@ Deployment in a sibling namespace (`<release>-mcp`, i.e.
 (or manually:)
 
 ```bash
-helm upgrade --install agentic-enterprise-obot \
+helm upgrade --install enterprise-platform-obot \
   --repo https://charts.obot.ai obot \
   --version v0.21.1 \
-  --namespace agentic-enterprise --create-namespace \
+  --namespace enterprise-platform --create-namespace \
   -f deploy/helm/obot/values.yaml \
   --wait --timeout 8m
 ```
@@ -31,14 +31,14 @@ helm upgrade --install agentic-enterprise-obot \
 ## Reach the UI
 
 ```bash
-kubectl -n agentic-enterprise port-forward svc/agentic-enterprise-obot 8080:8080
+kubectl -n enterprise-platform port-forward svc/enterprise-platform-obot 8080:8080
 # open http://localhost:8080
 ```
 
 ## Adding MCP servers
 
 After install, use the Obot UI or its registry API to add MCP servers.
-Each new server becomes a Deployment under `agentic-enterprise-obot-mcp`.
+Each new server becomes a Deployment under `enterprise-platform-obot-mcp`.
 
 ## Uninstall
 

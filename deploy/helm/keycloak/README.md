@@ -1,6 +1,6 @@
-# agentic-enterprise-keycloak
+# enterprise-platform-keycloak
 
-Keycloak IdP for the `agentic-enterprise` namespace. Runs in **dev mode** (H2,
+Keycloak IdP for the `enterprise-platform` namespace. Runs in **dev mode** (H2,
 ephemeral) and imports the `agentic-dev` realm on startup from
 [realm-agentic-dev.json](realm-agentic-dev.json).
 
@@ -20,7 +20,7 @@ The `tenant` claim is what scopes the FalkorDB graph — not any header.
 ## Install
 
 ```bash
-helm -n agentic-enterprise upgrade --install agentic-enterprise-keycloak deploy/helm/keycloak --wait
+helm -n enterprise-platform upgrade --install enterprise-platform-keycloak deploy/helm/keycloak --wait
 ```
 
 The Service is `ClusterIP` by default (access via `kubectl port-forward`) — a
@@ -28,7 +28,7 @@ LoadBalancer would hang `helm --wait` on a plain kind cluster with no LB provide
 For browser PKCE via cloud-provider-kind, opt in:
 
 ```bash
-helm -n agentic-enterprise upgrade --install agentic-enterprise-keycloak deploy/helm/keycloak --wait \
+helm -n enterprise-platform upgrade --install enterprise-platform-keycloak deploy/helm/keycloak --wait \
   --set service.type=LoadBalancer --set hostname=http://<external-url>
 ```
 
@@ -37,7 +37,7 @@ so the token `iss` matches what the browser and the in-cluster validators use.
 ## Caveats (dev-only)
 
 - Dev mode uses H2 — state is lost on pod restart (realm re-imports). For a durable
-  setup, switch to `start` with `KC_DB=postgres` against `agentic-enterprise-postgres` and a
+  setup, switch to `start` with `KC_DB=postgres` against `enterprise-platform-postgres` and a
   bootstrapped `keycloak` database.
 - **Token exchange**: started with `--features=token-exchange` and each agent client
   has `standard.token.exchange.enabled=true`. Depending on the Keycloak point

@@ -1,4 +1,4 @@
-# agentic-enterprise-otel-collector
+# enterprise-platform-otel-collector
 
 Umbrella chart over `open-telemetry/opentelemetry-collector` running the
 **contrib** distribution (needs the `loki` and `prometheusremotewrite`
@@ -10,18 +10,18 @@ Pipelines mirror [config/otel-collector/config.yaml](../../../config/otel-collec
 
 ```bash
 helm dependency update deploy/helm/otel-collector
-helm install agentic-enterprise-otel-collector deploy/helm/otel-collector \
-  --namespace agentic-enterprise --create-namespace \
+helm install enterprise-platform-otel-collector deploy/helm/otel-collector \
+  --namespace enterprise-platform --create-namespace \
   --wait --timeout 5m
 ```
 
 Reachable inside the cluster at:
 
-- `agentic-enterprise-otel-collector:4317` (OTLP gRPC)
-- `agentic-enterprise-otel-collector:4318` (OTLP HTTP)
+- `enterprise-platform-otel-collector:4317` (OTLP gRPC)
+- `enterprise-platform-otel-collector:4318` (OTLP HTTP)
 
 ## Uninstall
 
 ```bash
-helm uninstall agentic-enterprise-otel-collector -n agentic-enterprise
+helm uninstall enterprise-platform-otel-collector -n enterprise-platform
 ```

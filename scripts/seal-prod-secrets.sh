@@ -87,25 +87,25 @@ seal_one() {  # name  out-filename  <kubectl create secret args…>
   ./deploy.sh --seal --env prod "$name" "$OUT_REL/$out" "$@"
 }
 
-seal_one agentic-enterprise-postgres agentic-enterprise-postgres.sealedsecret.yaml \
+seal_one enterprise-platform-postgres enterprise-platform-postgres.sealedsecret.yaml \
   --from-literal=POSTGRES_USER="$POSTGRES_USER" \
   --from-literal=POSTGRES_PASSWORD="$POSTGRES_PASSWORD" \
   --from-literal=POSTGRES_DB="$POSTGRES_DB"
 
-seal_one agentic-enterprise-keycloak-admin agentic-enterprise-keycloak-admin.sealedsecret.yaml \
+seal_one enterprise-platform-keycloak-admin enterprise-platform-keycloak-admin.sealedsecret.yaml \
   --from-literal=username="$KEYCLOAK_ADMIN_USERNAME" \
   --from-literal=password="$KEYCLOAK_ADMIN_PASSWORD"
 
-seal_one agentic-enterprise-grafana-admin agentic-enterprise-grafana-admin.sealedsecret.yaml \
+seal_one enterprise-platform-grafana-admin enterprise-platform-grafana-admin.sealedsecret.yaml \
   --from-literal=admin-user="$GRAFANA_ADMIN_USER" \
   --from-literal=admin-password="$GRAFANA_ADMIN_PASSWORD"
 
-seal_one agentic-enterprise-litellm-secrets agentic-enterprise-litellm-secrets.sealedsecret.yaml \
+seal_one enterprise-platform-litellm-secrets enterprise-platform-litellm-secrets.sealedsecret.yaml \
   --from-literal=masterkey="$LITELLM_MASTER_KEY" \
   --from-literal=anthropic-api-key="$ANTHROPIC_API_KEY" \
   --from-literal=openai-api-key="$OPENAI_API_KEY"
 
-seal_one agentic-enterprise-s3-creds agentic-enterprise-s3-creds.sealedsecret.yaml \
+seal_one enterprise-platform-s3-creds enterprise-platform-s3-creds.sealedsecret.yaml \
   --from-literal=AWS_ACCESS_KEY_ID="$S3_ACCESS_KEY_ID" \
   --from-literal=AWS_SECRET_ACCESS_KEY="$S3_SECRET_ACCESS_KEY" \
   --from-literal=AWS_DEFAULT_REGION="$S3_REGION" \

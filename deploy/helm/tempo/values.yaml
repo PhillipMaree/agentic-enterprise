@@ -1,25 +1,25 @@
 # Overrides for grafana/tempo (single-binary; NOT tempo-distributed),
 # installed directly via `--repo`. Mirrors config/tempo/tempo.yaml.
 #
-# Storage backend is the SeaweedFS S3 deployed by agentic-enterprise-seaweedfs.
+# Storage backend is the SeaweedFS S3 deployed by enterprise-platform-seaweedfs.
 # Bucket `tempo-traces` must exist before this chart starts —
 # deploy.sh runs the bootstrap-buckets Job as a pre-install hook.
 
 # Inline tempo config. The chart wraps this in a ConfigMap and mounts it.
 # S3 credentials are injected as AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY from
-# the agentic-enterprise-s3-creds Secret (decrypted from
+# the enterprise-platform-s3-creds Secret (decrypted from
 # deploy/sealed-secrets/s3.sealed.yaml). access_key/secret_key are omitted
 # below so Tempo's S3 client falls back to the AWS credential chain (env).
 tempo:
   extraEnvFrom:
     - secretRef:
-        name: agentic-enterprise-s3-creds
+        name: enterprise-platform-s3-creds
   storage:
     trace:
       backend: s3
       s3:
         bucket: tempo-traces
-        endpoint: agentic-enterprise-seaweedfs-all-in-one:8333
+        endpoint: enterprise-platform-seaweedfs-all-in-one:8333
         insecure: true
         forcepathstyle: true
       wal:

@@ -1,7 +1,7 @@
 {
   "uid": "agentic-usage-overview",
   "title": "Agentic Usage Overview (LLM + MCP)",
-  "tags": ["agentic-enterprise", "usage", "tenant"],
+  "tags": ["enterprise-platform", "usage", "tenant"],
   "timezone": "browser",
   "schemaVersion": 39,
   "editable": true,
