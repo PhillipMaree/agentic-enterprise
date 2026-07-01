@@ -1,12 +1,8 @@
 # enterprise-platform
 
-End-to-end local development stack for agentic AI: an LLM gateway with
-built-in PII masking, an MCP tool federation gateway, experiment tracking,
-a full traces/logs/metrics observability stack, and a Keycloak identity
-provider for OIDC auth (with token exchange across the agent chain) — all
-glued together so an agentic app needs to know about one ingress (LiteLLM),
-one telemetry egress (OTel Collector), and one IdP (Keycloak), and nothing
-else.
+End-to-end local development stack for agentic AI and RAG applications: an LLM gateway with PII masking, an MCP tool gateway and registry, document conversion, hybrid lexical/vector search, graph storage, experiment tracking, observability, and a Keycloak identity provider for OIDC auth and token exchange.
+
+The stack is designed so an agentic/RAG app can rely on a small set of local platform surfaces: LiteLLM for model calls, Obot for tools, OpenSearch for hybrid retrieval, FalkorDB for graph context, Docling for document conversion during ingestion, OTel Collector for telemetry, and Keycloak for identity.
 
 Two consumption surfaces, both running the same set of services:
 
@@ -23,47 +19,62 @@ Two consumption surfaces, both running the same set of services:
 ```mermaid
 %%{init: {'theme': 'dark'}}%%
 flowchart TB
-    subgraph clients [Agentic apps]
-        app[Your agent / workflow]
+    subgraph clients [Agentic apps / RAG apps]
+        app[Agent / workflow / frontend]
+        ingest[Corpus ingestion job]
     end
 
     subgraph authz [Auth]
         keycloak[Keycloak IdP :18080]
     end
 
-    subgraph data [Data plane]
-        direction LR
-        litellm[LiteLLM proxy :4000]
-        mcp[Obot MCP Gateway + Registry :8080]
+    subgraph ingress [AI and tool ingress]
+        litellm[LiteLLM proxy + UI :14000]
+        obot[Obot MCP gateway + registry :18090]
         presidio_a[Presidio analyzer]
         presidio_o[Presidio anonymizer]
     end
 
+    subgraph rag [RAG retrieval and knowledge layer]
+        docling[Docling document conversion API :15001]
+        opensearch[(OpenSearch BM25 + kNN :19200)]
+        falkordb[(FalkorDB knowledge graph :16380/:13000)]
+    end
+
     subgraph tracking [Experiment tracking]
-        mlflow[MLflow :5000]
+        mlflow[MLflow :15000]
     end
 
     subgraph telemetry [Telemetry plane]
-        direction LR
-        otel[OTel Collector :4317/:4318]
-        tempo[Tempo - traces]
-        loki[Loki - logs]
-        prom[Prometheus - metrics]
-        grafana[Grafana :3001]
+        otel[OTel Collector :14317/:14318]
+        tempo[Tempo traces :13200]
+        loki[Loki logs :13100]
+        prom[Prometheus metrics :19090]
+        grafana[Grafana :13001]
     end
 
     subgraph infra [Shared infrastructure]
-        direction LR
-        redis[(Redis :6379)]
-        postgres[(Postgres :5432)]
-        falkordb[(FalkorDB :6380/:3000)]
-        seaweedfs[(SeaweedFS S3 :8333)]
+        redis[(Redis :16379)]
+        postgres[(Postgres :15432)]
+        seaweedfs[(SeaweedFS S3 :18333)]
+    end
+
+    subgraph bootstrap [One-shot bootstraps]
+        pginit[postgres-init]
+        s3init[seaweedfs-init]
     end
 
     app -->|OIDC login + token exchange| keycloak
     app -->|chat completions| litellm
-    app -->|tool calls| mcp
+    app -->|tool calls| obot
+    app -->|retrieval queries| opensearch
+    app -->|graph context / relationships| falkordb
     app -.->|OTLP| otel
+
+    ingest -->|convert PDF/DOCX/etc.| docling
+    ingest -->|store raw/derived artifacts| seaweedfs
+    ingest -->|index chunks + vectors| opensearch
+    ingest -->|write entities / topics / relationships| falkordb
 
     litellm --> presidio_a
     litellm --> presidio_o
@@ -71,53 +82,54 @@ flowchart TB
     litellm -->|usage / keys| postgres
     litellm -.->|OTLP| otel
 
-    mlflow --> postgres
+    mlflow -->|backend store| postgres
     mlflow -->|artifacts| seaweedfs
+
+    s3init -->|create buckets| seaweedfs
+    pginit -->|create litellm + equinor_search DBs| postgres
 
     otel --> tempo
     otel --> loki
     otel --> prom
 
-    tempo -->|blocks| seaweedfs
+    tempo -->|trace blocks| seaweedfs
     loki -->|chunks + index| seaweedfs
 
     grafana --> tempo
     grafana --> loki
     grafana --> prom
-
-    classDef dataplane fill:#0d3b66,stroke:#4fc3f7,color:#e1f5ff
-    classDef telemetryplane fill:#5a3000,stroke:#ffb74d,color:#fff3e0
-    classDef trackingplane fill:#311b6b,stroke:#b39ddb,color:#ede7f6
-    classDef infraplane fill:#14401a,stroke:#81c784,color:#e8f5e9
-    classDef authplane fill:#4a1530,stroke:#f48fb1,color:#fce4ec
-
-    class litellm,mcp,presidio_a,presidio_o dataplane
-    class otel,tempo,loki,prom,grafana telemetryplane
-    class mlflow trackingplane
-    class redis,postgres,falkordb,seaweedfs infraplane
-    class keycloak authplane
 ```
 
 **Reading the diagram**
 
-- Solid arrows are request-path (synchronous: PII redaction, cache, DB writes, S3 puts).
-- Dotted arrows are OTLP telemetry (asynchronous, fire-and-forget).
-- The **agentic app's only required outbound surfaces** are LiteLLM (LLM calls),
-  the MCP gateway (tools), the OTel collector (telemetry), and Keycloak (OIDC
-  login + token exchange). Everything else is internal to the stack.
-- **Keycloak is the IdP**: the browser logs in against the `agentic-dev` realm,
-  and the agent chain exchanges tokens client-to-client (see the
-  [chart README](deploy/helm/keycloak/README.md) for the realm's clients and
-  the `tenant` claim that scopes the FalkorDB graph).
-- **SeaweedFS is the S3 backend for everything**: MLflow artifacts, Tempo
-  trace blocks, Loki chunks + index. One object store, four buckets.
-- **Obot is both a tool gateway and a registry**: alongside proxying tool
-  calls it serves a read-only, MCP-spec registry API at `/v0.1/servers`
-  (cursor-paginated, `search`/`limit` query params) so clients can discover
-  the MCP servers it manages. Dev runs in **no-auth mode**
-  (`OBOT_SERVER_AUTH_REGISTRY_REQUIRE_AUTH=false`), exposing servers granted
-  to all users; flip auth on to scope discovery per identity. See the
-  [chart README](deploy/helm/obot/README.md).
+- Solid arrows are request/data paths (synchronous).
+- Dotted arrows are asynchronous OTLP telemetry.
+- Agentic apps call LiteLLM for LLMs, Obot for tools, OpenSearch for hybrid
+  retrieval, FalkorDB for graph context, Keycloak for identity, and OTel
+  Collector for telemetry.
+- Ingestion jobs call Docling to convert source documents, store raw/derived
+  artifacts in SeaweedFS when needed, index chunks/vectors in OpenSearch, and
+  optionally write entities/topics/relationships into FalkorDB.
+- OpenSearch handles lexical/vector retrieval; FalkorDB handles graph structure
+  and reasoning context — they are complementary, not redundant.
+- `postgres-init` and `seaweedfs-init` are one-shot bootstrap jobs, not runtime
+  services.
+- SeaweedFS backs MLflow artifacts, Tempo trace blocks, and Loki chunks/index;
+  application ingestion jobs may also use it for raw/derived artifact storage.
+
+## RAG and GraphRAG flow
+
+The local stack supports a typical enterprise RAG flow:
+
+1. Source documents are collected by an ingestion job or application code.
+2. Docling converts PDFs, DOCX files, and similar formats into structured text/metadata.
+3. Raw files and derived artifacts can be stored in SeaweedFS S3.
+4. Text chunks and embeddings are indexed in OpenSearch for hybrid BM25 + kNN retrieval.
+5. Entities, topics, document relationships, and provenance can be written to FalkorDB for GraphRAG context.
+6. The runtime agent retrieves candidate evidence from OpenSearch, enriches it through FalkorDB, calls tools through Obot when needed, and sends generation requests through LiteLLM.
+7. All services emit traces/metrics/logs through the OTel/Grafana stack.
+
+The exact chunking strategy and index schema belong in the application layer unless codified elsewhere in this repo.
 
 ## Tenant attribution
 
@@ -201,13 +213,34 @@ for f in postgres_password keycloak_admin_password grafana_admin_password; do
   cp "secrets/compose/$f.example" "secrets/compose/$f"
 done
 
-docker compose up -d                            # 15 services, ~60s to settle
+docker compose up -d                            # ~60s to settle
 docker compose ps                               # all should be healthy or "Up"
 ```
 
-State persists to gitignored bind mounts under the repo root:
-`./.seaweedfs/`, `./.redis/`, `./.postgres/`, `./.falkordb/`, `./.tempo/`,
-`./.loki/`. Prometheus + Grafana use named Docker volumes.
+Compose defines 19 service entries: 17 long-running containers plus 2 one-shot
+bootstrap jobs (`postgres-init` and `seaweedfs-init`). The bootstrap jobs exit
+after creating the required Postgres databases/role and SeaweedFS buckets.
+
+> The first Docling conversion can be slower because the CPU image may download
+> models into the `docling-models` Docker volume on first use.
+
+> OpenSearch runs with `DISABLE_SECURITY_PLUGIN=true` and listens over plain
+> HTTP — intentional for local dev.
+
+State persists to gitignored bind mounts under the repo root and to named
+Docker volumes:
+
+```text
+./.seaweedfs/
+./.redis/
+./.postgres/
+./.falkordb/
+./.opensearch/
+./.obot/
+./.tempo/
+./.loki/
+Docker volumes: prometheus-data, grafana-data, docling-models
+```
 
 Try it:
 
@@ -226,14 +259,23 @@ open http://localhost:14000/ui
 
 # MLflow
 open http://localhost:15000
+
+# OpenSearch cluster health
+curl -sS http://localhost:19200/_cluster/health | jq
+
+# OpenSearch nodes + plugins
+curl -sS http://localhost:19200/_nodes/plugins | jq
+
+# Docling UI
+open http://localhost:15001
 ```
 
 Tear down:
 
 ```bash
 docker compose down                                              # keep data
-docker compose down -v && rm -rf .seaweedfs .redis .postgres \
-  .falkordb .tempo .loki                                         # full wipe
+docker compose down -v
+rm -rf .seaweedfs .redis .postgres .falkordb .opensearch .obot .tempo .loki
 ```
 
 To use real Anthropic / OpenAI models, set the keys in `.env` (the file is
@@ -245,10 +287,25 @@ cp .env.example .env
 docker compose up -d --force-recreate litellm
 ```
 
+### Startup dependencies
+
+Compose orders startup with `depends_on` health/completion conditions:
+
+- `postgres-init` waits for Postgres healthy, then creates the `litellm` DB,
+  the `equinor_search` DB, and the `equinor` role.
+- `seaweedfs-init` waits for SeaweedFS healthy, then creates the S3 buckets.
+- `litellm` waits for `postgres-init` completed, Redis healthy, and the two
+  Presidio sidecars healthy.
+- `mlflow`, `tempo`, and `loki` wait for `seaweedfs-init` completed.
+- `otel-collector` depends on Tempo, Prometheus, and Loki started.
+- `grafana` depends on Tempo, Prometheus, and Loki started.
+- OpenSearch and Docling have no Compose-level dependencies, but application
+  code will depend on them.
+
 ### Path B — Kubernetes (kind + Helm)
 
-This path runs the same services inside a local kind cluster — useful for
-practicing the Helm install flow and the cross-chart wiring without
+This path runs the Helm-charted services inside a local kind cluster — useful
+for practicing the Helm install flow and the cross-chart wiring without
 provisioning a real cluster. All orchestration is wrapped in
 [deploy.sh](deploy.sh):
 
@@ -273,6 +330,9 @@ The script:
 - bootstraps SeaweedFS buckets as an in-cluster Job (no host `aws` CLI
   needed) and creates the `litellm` Postgres database
 - uses `helm upgrade --install` so re-running is safe
+
+Docker Compose is the most complete local stack. OpenSearch and Docling are
+Compose-only until matching Helm charts and CI smoke tests are added.
 
 Try it (run each port-forward in its own terminal):
 
@@ -333,22 +393,34 @@ helm install enterprise-platform-litellm deploy/helm/litellm -n enterprise-platf
 
 ## Services
 
+Compose defines 19 service entries: 17 long-running containers plus 2 one-shot
+bootstrap jobs (`postgres-init`, `seaweedfs-init`).
+
 | Plane | Service | Purpose | Image | Helm chart |
 | --- | --- | --- | --- | --- |
 | Infra | SeaweedFS | S3-compatible object store | `chrislusf/seaweedfs:4.29` | [deploy/helm/seaweedfs/](deploy/helm/seaweedfs/) |
 | Infra | Redis | KV + JSON + Search (LangGraph checkpointer, LiteLLM cache) | `redis:latest` (Redis 8) | [deploy/helm/redis/](deploy/helm/redis/) |
 | Infra | Postgres | Relational store (LiteLLM usage, MLflow, LangGraph) | `postgres:latest` | [deploy/helm/postgres/](deploy/helm/postgres/) |
 | Infra | FalkorDB | Property-graph DB (GraphRAG) | `falkordb/falkordb:latest` | [deploy/helm/falkordb/](deploy/helm/falkordb/) |
+| Search | OpenSearch | Hybrid BM25 + kNN vector search store | `opensearchproject/opensearch:2.18.0` | Compose only |
+| Ingestion | Docling | Document conversion API/UI (PDF/DOCX/… → structured text) | `quay.io/docling-project/docling-serve-cpu:latest` | Compose only |
+| Bootstrap | postgres-init | One-shot: creates `litellm` + `equinor_search` DBs and `equinor` role | `postgres:latest` | (job) |
+| Bootstrap | seaweedfs-init | One-shot: creates SeaweedFS buckets | `amazon/aws-cli:latest` | (job) |
 | Auth | Keycloak | OIDC IdP + token exchange for the agent chain (`agentic-dev` realm) | `quay.io/keycloak/keycloak:26.1` | [deploy/helm/keycloak/](deploy/helm/keycloak/) |
-| Data | LiteLLM | OpenAI-compatible LLM proxy + Presidio PII masking | `ghcr.io/berriai/litellm:main-stable` | [deploy/helm/litellm/](deploy/helm/litellm/) |
-| Data | Presidio (analyzer + anonymizer) | PII detection + redaction sidecars for LiteLLM | `mcr.microsoft.com/presidio-{analyzer,anonymizer}` | [deploy/helm/presidio/](deploy/helm/presidio/) |
+| Data | LiteLLM | OpenAI-compatible LLM proxy + Presidio PII masking | `ghcr.io/berriai/litellm:v1.87.2` | [deploy/helm/litellm/](deploy/helm/litellm/) |
+| Data | Presidio analyzer | PII detection sidecar for LiteLLM | `mcr.microsoft.com/presidio-analyzer:2.2.361` | [deploy/helm/presidio/](deploy/helm/presidio/) |
+| Data | Presidio anonymizer | PII redaction sidecar for LiteLLM | `mcr.microsoft.com/presidio-anonymizer:2.2.361` | [deploy/helm/presidio/](deploy/helm/presidio/) |
 | Data | Obot | MCP gateway + registry + chat UI; deploys MCP servers as k8s workloads | `ghcr.io/obot-platform/obot:latest` | [deploy/helm/obot/](deploy/helm/obot/) |
 | Tracking | MLflow | Experiment + artifact tracking | `ghcr.io/mlflow/mlflow:v2.18.0` | [deploy/helm/mlflow/](deploy/helm/mlflow/) |
 | Telemetry | OTel Collector | OTLP fan-out to tempo/loki/prometheus | `otel/opentelemetry-collector-contrib:latest` | [deploy/helm/otel-collector/](deploy/helm/otel-collector/) |
 | Telemetry | Tempo | Traces backend (S3) | `grafana/tempo:latest` | [deploy/helm/tempo/](deploy/helm/tempo/) |
 | Telemetry | Loki | Logs backend (S3) | `grafana/loki:latest` | [deploy/helm/loki/](deploy/helm/loki/) |
 | Telemetry | Prometheus | Metrics (remote-write + scrape) | `prom/prometheus:latest` | [deploy/helm/prometheus/](deploy/helm/prometheus/) |
-| Telemetry | Grafana | UI with auto-provisioned datasources | `grafana/grafana:latest` | [deploy/helm/grafana/](deploy/helm/grafana/) |
+| Telemetry | Grafana | UI with auto-provisioned datasources | `grafana/grafana:11.6.3` | [deploy/helm/grafana/](deploy/helm/grafana/) |
+
+Presidio is two services on Compose (`presidio-analyzer` and
+`presidio-anonymizer`); both are covered by the single
+[presidio](deploy/helm/presidio/) Helm chart.
 
 ## Ports (host → container)
 
@@ -368,6 +440,8 @@ unchanged; this only affects what you type on `localhost`.
 | 15432 | postgres | Postgres |
 | 16380 | falkordb | FalkorDB (RESP, graph) |
 | 13000 | falkordb | FalkorDB Browser UI |
+| 19200 | opensearch | Hybrid BM25 + kNN vector search API |
+| 15001 | docling | Document conversion API/UI |
 | 18080 | keycloak | Keycloak OIDC IdP |
 | 14000 | litellm | LiteLLM proxy + UI |
 | 18090 | obot | Obot MCP Gateway + Registry + UI (container port 8080) |
@@ -392,6 +466,10 @@ unchanged; this only affects what you type on `localhost`.
 | [config/litellm/config.yaml](config/litellm/config.yaml) | volume mount | mirrored in [litellm/values.yaml](deploy/helm/litellm/values.yaml) | Model list + PII callback + cache |
 | [config/seaweedfs-init/buckets.sh](config/seaweedfs-init/buckets.sh) | run by `seaweedfs-init` service | document only (see below) | One-shot bucket bootstrap |
 | [deploy/helm/keycloak/realm-agentic-dev.json](deploy/helm/keycloak/realm-agentic-dev.json) | volume mount | configmap via `.Files.Get` | Keycloak `agentic-dev` realm: clients, scopes, token-exchange, demo users. Single source — both surfaces read the same file (not dual-stated). |
+
+> OpenSearch and Docling are currently configured directly in
+> `docker-compose.yaml`. There are no repo-managed `config/opensearch/` or
+> `config/docling/` directories.
 
 > **Implication of the dual-config layout.** Configs live in two places by
 > design: `config/*` are bind-mounted into Compose containers; the same
@@ -424,6 +502,10 @@ For Helm, credentials are **Sealed Secrets** (encrypted, committed, decrypted
 in-cluster) — see [docs/SECURITY.md](docs/SECURITY.md) and
 [deploy/sealed-secrets/](deploy/sealed-secrets/).
 
+OpenSearch and Docling currently run with local-dev defaults defined in
+`docker-compose.yaml`; no `.env` override is required unless configuration is
+extended.
+
 ## Chart-level READMEs
 
 Each Helm chart has its own README with prerequisites and per-service options:
@@ -452,9 +534,11 @@ Each Helm chart has its own README with prerequisites and per-service options:
 - [Prometheus](deploy/helm/prometheus/README.md)
 - [Grafana](deploy/helm/grafana/README.md)
 
+OpenSearch and Docling have no Helm charts — they are Compose-only.
+
 ## CI
 
-**One workflow per push** that builds **every service** in dependency
+**One workflow per push** that builds **every charted service** in dependency
 layers — parallel where independent.
 [deploy.yaml](.github/workflows/deploy.yaml) is the trigger workflow; on
 every push it runs all chart jobs (no paths-filter — the whole stack is
@@ -509,6 +593,16 @@ exactly when the whole stack is green.
    trace round trip, MLflow REST round trip, LiteLLM chat completion
    with `mock_response`, etc.)
 
+**OpenSearch and Docling are not in CI.** They are Compose-only: there are no
+`deploy/helm/opensearch/` or `deploy/helm/docling/` charts, and no
+`smoke-opensearch.sh` or `smoke-docling.sh` scripts under
+[.github/scripts/](.github/scripts/), so neither is built or smoke-tested by
+the workflow.
+
+- TODO: add Helm charts and CI smoke tests for OpenSearch and Docling.
+- TODO: add an OpenSearch smoke test verifying cluster health and kNN plugin availability.
+- TODO: add a Docling smoke test verifying API/UI health and a minimal conversion.
+
 **LiteLLM mocking**: CI sets `LITELLM_USE_MOCK_MODELS=1`, which makes
 `deploy.sh` overlay [values.ci-mock.yaml](deploy/helm/litellm/values.ci-mock.yaml)
 when installing LiteLLM. Every model returns canned `mock_response`
@@ -520,6 +614,18 @@ without hitting Anthropic/OpenAI. No repo secrets needed.
 drive a chat completion through LiteLLM (mock model), then verify
 the resulting metrics arrived in Prometheus. Catches cross-chart
 regressions that per-chart tests can't.
+
+## Security notes
+
+Dev-only defaults are insecure by design (`admin` / `password` / `any`) — see
+[docs/SECURITY.md](docs/SECURITY.md) for how secrets are handled on each path
+(file-based Compose secrets under `secrets/compose/`; Sealed Secrets for Helm).
+
+OpenSearch runs with the security plugin disabled
+(`DISABLE_SECURITY_PLUGIN=true`) and listens over plain HTTP on port 19200.
+Docling exposes a local conversion API/UI on port 15001. Both are intentional
+for laptop development only and must not be exposed directly in shared or
+production environments.
 
 ## Production deploy
 

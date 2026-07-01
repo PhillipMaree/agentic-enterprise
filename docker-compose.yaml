@@ -195,6 +195,11 @@ services:
         psql -tc "SELECT 1 FROM pg_database WHERE datname = 'litellm'" | grep -q 1 \
           || psql -c "CREATE DATABASE litellm"
         echo "litellm db ready"
+        psql -tc "SELECT 1 FROM pg_roles WHERE rolname = 'equinor'" | grep -q 1 \
+          || psql -c "CREATE ROLE equinor WITH LOGIN PASSWORD 'equinor'"
+        psql -tc "SELECT 1 FROM pg_database WHERE datname = 'equinor_search'" | grep -q 1 \
+          || psql -c "CREATE DATABASE equinor_search OWNER equinor"
+        echo "equinor_search db ready"
     restart: "no"
     networks:
       - network_bridge
